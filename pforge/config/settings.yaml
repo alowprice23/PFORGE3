@@ -1,0 +1,23 @@
+service:
+  name: pForge
+  environment: "dev"
+  log_level: "INFO"
+
+ports:
+  api: 8000
+  ui: 3000
+  grafana: 3000
+  prometheus: 9090
+  neo4j_http: 7474
+  neo4j_bolt: 7687
+  redis: 6379
+
+feature_flags:
+  enable_metrics: true
+  enable_agent_economy: true
+  enable_prompts_debug: false
+  allow_shell_exec: true
+
+mode: local # or docker
+
+cadence: 1.0 # orchestrator tick interval in seconds

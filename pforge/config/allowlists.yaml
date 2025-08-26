@@ -1,0 +1,21 @@
+shell_commands:
+  - pytest
+  - npm
+  - black
+  - ruff
+  - mypy
+  - isort
+  - git
+  - python
+  - pip
+  - node
+  - uvicorn
+
+egress_domains:
+  - api.openai.com
+  - api.anthropic.com
+  - generativelanguage.googleapis.com
+  - pypi.org
+  - files.pythonhosted.org
+  - registry.npmjs.org
+  - github.com

@@ -1,0 +1,33 @@
+providers:
+  - name: openai_o3_fixer
+    provider: openai
+    model: gpt-4o-mini
+    endpoint: "https://api.openai.com/v1/chat/completions"
+    max_context_tokens: 128000
+    cost_per_1k_tokens:
+      prompt: 0.010
+      completion: 0.030
+    default_params:
+      temperature: 0.2
+
+  - name: anthropic_claude37_coder
+    provider: anthropic
+    model: claude-3-7-sonnet-20240715
+    endpoint: "https://api.anthropic.com/v1/messages"
+    max_context_tokens: 200000
+    cost_per_1k_tokens:
+      prompt: 0.003
+      completion: 0.015
+    default_params:
+      temperature: 0.2
+
+  - name: gemini_25_pro_analyzer
+    provider: google
+    model: gemini-2.5-pro
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+    max_context_tokens: 115000
+    cost_per_1k_tokens:
+      prompt: 0.004
+      completion: 0.012
+    default_params:
+      temperature: 0.25

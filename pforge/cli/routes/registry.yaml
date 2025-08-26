@@ -1,0 +1,49 @@
+# This file serves as a manifest of all available skills for the agentic CLI.
+# The planning LLM can use this structured data to understand what tools
+# it has at its disposal.
+
+skills:
+  - name: status
+    description: "Display a summary of the pForge system's current health and key metrics (E, H, etc.)."
+    params: []
+
+  - name: proofs
+    description: "Fetch and display a detailed, signed proof bundle for a given operation ID."
+    params:
+      - name: op_id
+        type: str
+        required: true
+        description: "The unique ID of the operation to inspect."
+
+  - name: preflight
+    description: "Run a full suite of environmental preflight checks to validate runtimes, packages, and services."
+    params: []
+
+  - name: doctor
+    description: "Run the primary agentic loop to diagnose and repair a target directory until it reaches a QED state."
+    params:
+      - name: target_path
+        type: str
+        required: false
+        default: "."
+        description: "The path to the codebase to analyze."
+
+  - name: fix
+    description: "Apply a specific, targeted fix. (Lower-level than 'doctor')."
+    params:
+      - name: task_id
+        type: str
+        required: true
+        description: "The ID of a specific fix task from the Planner."
+
+  - name: verify
+    description: "Run a full backtest verification on a historical session log."
+    params:
+      - name: session_log_path
+        type: str
+        required: true
+        description: "Path to the AMP event log file to verify."
+
+  - name: budget
+    description: "View the current token budget status."
+    params: []

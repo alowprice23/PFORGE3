@@ -1,0 +1,20 @@
+qed_gate:
+  efficiency_target: 1.0
+  stability_window_ticks: 5
+
+planner:
+  cvar_alpha: 0.90
+
+constraints:
+  - id: phi.safety.no_secrets
+    blocking: true
+  - id: phi.sem.tests
+    blocking: true
+  - id: phi.struct.no_cycles
+    blocking: true
+  - id: phi.safety.env_locked
+    blocking: true
+  - id: phi.sem.typecheck
+    blocking: false
+  - id: phi.style.format
+    blocking: false

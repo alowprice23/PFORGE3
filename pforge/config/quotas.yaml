@@ -1,0 +1,19 @@
+defaults:
+  max_tokens_per_day: 1500000
+  cpu_limit: "2"
+  cpu_burst: "3"
+  memory_soft: "8Gi"
+  memory_hard: "12Gi"
+  shell_execs_per_min: 30
+  storage_soft: "5Gi"
+  storage_hard: "10Gi"
+
+tenants:
+  - name: default
+    max_tokens_per_day: 1500000
+    cpu_limit: "2"
+    memory_soft: "8Gi"
+  - name: premium
+    max_tokens_per_day: 5000000
+    cpu_limit: "4"
+    memory_soft: "16Gi"

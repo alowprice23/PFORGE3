@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}pForge{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    {% block head %}{% endblock %}
+</head>
+<body class="bg-gray-100 font-sans">
+    <nav class="bg-gray-800 text-white p-4">
+        <div class="container mx-auto flex justify-between">
+            <a href="/" class="font-bold text-xl">pForge</a>
+            <div>
+                <a href="/chat" class="px-3 py-2 rounded hover:bg-gray-700">Chat</a>
+                <a href="/dashboard" class="px-3 py-2 rounded hover:bg-gray-700">Dashboard</a>
+            </div>
+        </div>
+    </nav>
+    <main class="container mx-auto p-4">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
