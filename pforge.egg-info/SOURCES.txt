@@ -1,5 +1,7 @@
 README.md
 pyproject.toml
+pforge/config.py
+pforge/project.py
 pforge.egg-info/PKG-INFO
 pforge.egg-info/SOURCES.txt
 pforge.egg-info/dependency_links.txt

@@ -1,9 +1,10 @@
 from __future__ import annotations
 import ast
 import os
-from pathlib import Path
 from typing import Dict, Set
 import logging
+
+from pforge.project import Project
 
 logger = logging.getLogger(__name__)
 
@@ -17,38 +18,33 @@ class DependencyGraph:
         # This means module.a imports module.b and module.c.
         self.graph: Dict[str, Set[str]] = {}
 
-    def build_from_path(self, source_root: Path):
+    def build_from_project(self, project: Project):
         """
-        Scans all Python files in a directory and builds the dependency graph.
+        Scans all Python files in a project and builds the dependency graph.
         """
         self.graph = {}
-        py_files = list(source_root.rglob("*.py"))
+        py_files = project.list_files("**/*.py")
 
         for file_path in py_files:
-            module_name = self._file_path_to_module_name(file_path, source_root)
+            module_name = self._file_path_to_module_name(file_path)
             if module_name:
-                self.graph[module_name] = self._find_imports(file_path, source_root)
+                self.graph[module_name] = self._find_imports(file_path, project)
 
         logger.info(f"Built dependency graph with {len(self.graph)} modules.")
 
-    def _file_path_to_module_name(self, file_path: Path, source_root: Path) -> str | None:
+    def _file_path_to_module_name(self, file_path: str) -> str | None:
         """Converts a file path to a Python module name."""
-        try:
-            relative_path = file_path.relative_to(source_root)
-            # Remove .py extension and replace / with .
-            return str(relative_path).replace(".py", "").replace(os.sep, ".")
-        except ValueError:
-            return None
+        # Remove .py extension and replace / with .
+        return file_path.replace(".py", "").replace(os.sep, ".")
 
-    def _find_imports(self, file_path: Path, source_root: Path) -> Set[str]:
+    def _find_imports(self, file_path: str, project: Project) -> Set[str]:
         """
         Parses a Python file to find all imported modules.
         """
         imports = set()
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            tree = ast.parse(content, filename=str(file_path))
+            content = project.read_file(file_path)
+            tree = ast.parse(content, filename=file_path)
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):

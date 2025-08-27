@@ -2,11 +2,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pforge.config import Config
     from pforge.messaging.in_memory_bus import InMemoryBus
     from pforge.orchestrator.state_bus import PuzzleState
+    from pforge.project import Project
+
 
 class BaseAgent(ABC):
     """
@@ -19,10 +22,12 @@ class BaseAgent(ABC):
     name: str = "base-agent"
     tick_interval: float = 1.0  # Default seconds between on_tick calls
 
-    def __init__(self, bus: InMemoryBus):
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
         if not bus:
             raise ValueError("A message bus instance is required.")
         self.bus = bus
+        self.config = config
+        self.project = project
         self.logger = logging.getLogger(f"pforge.agent.{self.name}")
         self._is_running = False
 

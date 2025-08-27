@@ -1,0 +1,10 @@
+# pForge Configuration File
+
+[llm]
+# The default model to use for code generation and analysis.
+# The prompt mentioned gpt-4-turbo as an example.
+model = "gpt-4-turbo"
+
+[doctor]
+# The maximum number of times the FixerAgent will attempt to fix a bug.
+retry_limit = 3
