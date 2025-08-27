@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import os
 
 from pforge.agents.base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType
@@ -16,16 +17,22 @@ class SummarizerAgent(BaseAgent):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # In a real system, the budget meter would be shared.
-        db_path = "pforge/var/budget.db"
-        budget_meter = BudgetMeter(db_path=db_path)
-        self.llm_client = OpenAIClient(budget_meter=budget_meter)
+        budget_meter = BudgetMeter(
+            tenant="pforge-dev",
+            daily_quota_tokens=1_000_000,
+            redis_client=self.bus.redis_client
+        )
+        self.llm_client = OpenAIClient(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            budget_meter=budget_meter
+        )
 
     async def on_tick(self):
         """
         Listens for FIX.PATCH_APPLIED events and generates a summary.
         """
         messages = await stream_read_group(
-            self.redis_client,
+            self.bus.redis_client,
             self.group_name,
             self.name,
             {"pforge:amp:global:events": ">"}

@@ -2,6 +2,7 @@ import asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
+import subprocess
 
 from pforge.config import Config
 from pforge.orchestrator.core import Orchestrator
@@ -16,16 +17,27 @@ def project_with_retry_limit(tmp_path):
     (tmp_path / "pforge").mkdir()
     (tmp_path / "pforge.toml").write_text("[doctor]\nretry_limit = 2\n")
     project_root = tmp_path
-    (project_root / "src").mkdir()
-    (project_root / "src" / "buggy.py").write_text("def foo(): return 1")
+    (project_root / "pforge").mkdir(exist_ok=True)
+    (project_root / "pforge" / "buggy.py").write_text("def foo(): return 1")
+    # Also create a dummy test file so the test runner has something to find
+    tests_dir = project_root / "pforge" / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    (tests_dir / "test_dummy.py").write_text("def test_dummy(): assert True")
+    (tests_dir / "test_buggy.py").write_text("from pforge.buggy import foo\n\ndef test_foo():\n    assert foo() == 2")
+
+    # Initialize a git repository for the backtracker agent to use
+    subprocess.run(["git", "init"], cwd=project_root, check=True)
+    subprocess.run(["git", "add", "."], cwd=project_root, check=True)
+    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=project_root, check=True)
+
     return Project(project_root)
 
 
 @pytest.mark.asyncio
-@patch("pforge.agents.fixer_agent.run_tests")
-@patch("pforge.agents.fixer_agent.OpenAIClient")
+@patch("pforge.validation.test_runner.run_tests")
+@patch("pforge.llm_clients.openai_o3_client.OpenAIClient.chat", new_callable=AsyncMock)
 async def test_retry_loop_generates_augmented_prompt_and_stops(
-    mock_openai_client_constructor, mock_run_tests, project_with_retry_limit
+    mock_llm_chat, mock_run_tests, project_with_retry_limit
 ):
     """
     Tests the full retry loop:
@@ -43,9 +55,7 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
     orchestrator.setup_agents()
 
     # Mock the LLM to always provide a bad fix
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.chat = AsyncMock(return_value="def foo(): return 2 # still wrong")
-    mock_openai_client_constructor.return_value = mock_llm_instance
+    mock_llm_chat.return_value = "def foo(): return 2 # still wrong"
 
     # Mock run_tests to always fail
     mock_run_tests.return_value = TestRunnerResult(
@@ -78,7 +88,7 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
         # --- Assert ---
         # The FixerAgent should have been called 3 times:
         # 1 initial attempt + 2 retries (since retry_limit is 2)
-        assert mock_llm_instance.chat.call_count == 3
+        assert mock_llm_chat.call_count == 3
 
         # The planner should have published 3 FIX_TASKs
         # 1 initial, 2 for retries
@@ -98,6 +108,11 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
         # We can't easily check logs here, but the call count implies it stopped.
 
         # --- Cleanup ---
+        # The orchestrator should stop on its own after giving up.
+        # We cancel here to be sure the task is cleaned up, but it might already be done.
         run_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
+        try:
             await run_task
+        except asyncio.CancelledError:
+            # This is expected if the task was still running.
+            pass

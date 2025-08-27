@@ -22,8 +22,8 @@ class MisfitAgent(BaseAgent):
     name = "misfit"
     tick_interval: float = 2.0
 
-    def __init__(self, bus: InMemoryBus):
-        super().__init__(bus)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
 
         budget_meter = BudgetMeter(

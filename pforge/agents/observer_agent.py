@@ -15,9 +15,9 @@ class ObserverAgent(BaseAgent):
     name: str = "observer"
     tick_interval: float = 5.0  # Run tests every 5 seconds
 
-    def __init__(self, bus, source_root: str | Path = "."):
-        super().__init__(bus)
-        self.source_root = Path(source_root)
+    def __init__(self, bus, config, project):
+        super().__init__(bus, config, project)
+        self.source_root = self.project.root
 
     async def on_tick(self):
         """

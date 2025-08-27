@@ -4,6 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Set
+import orjson
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -22,9 +23,9 @@ class FalsePieceAgent(BaseAgent):
     name = "false_piece"
     tick_interval: float = 30.0  # This is a heavy operation, run it infrequently
 
-    def __init__(self, bus: InMemoryBus, source_root: str | Path = "."):
-        super().__init__(bus)
-        self.source_root = Path(source_root)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
+        self.source_root = self.project.root
 
         budget_meter = BudgetMeter(
             tenant="pforge-dev",

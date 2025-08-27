@@ -96,7 +96,7 @@ class Orchestrator:
             return
 
         current_retry_count = self.retry_counts.get(file_path, 0)
-        retry_limit = self.config.get("doctor.retry_limit", 3)
+        retry_limit = self.config.doctor.retry_limit
 
         if current_retry_count < retry_limit:
             self.retry_counts[file_path] = current_retry_count + 1

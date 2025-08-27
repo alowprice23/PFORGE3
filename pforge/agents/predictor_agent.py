@@ -22,8 +22,8 @@ class PredictorAgent(BaseAgent):
     name = "predictor"
     tick_interval: float = 1.0
 
-    def __init__(self, bus: InMemoryBus):
-        super().__init__(bus)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
 
         # This would be injected in a real system

@@ -20,9 +20,9 @@ class BacktrackerAgent(BaseAgent):
     name = "backtracker"
     tick_interval: float = 1.0
 
-    def __init__(self, bus: InMemoryBus, source_root: str | Path = "."):
-        super().__init__(bus)
-        self.source_root = Path(source_root)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
+        self.source_root = self.project.root
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_REJECTED.value)
 
     async def on_tick(self):

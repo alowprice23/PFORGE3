@@ -20,9 +20,9 @@ class SpecOracleAgent(BaseAgent):
     name: str = "spec_oracle"
     tick_interval: float = 10.0  # Re-scan for spec changes periodically
 
-    def __init__(self, bus: InMemoryBus, source_root: str | Path = "."):
-        super().__init__(bus)
-        self.source_root = Path(source_root)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
+        self.source_root = self.project.root
         self.doc_dirs: List[Path] = [self.source_root, self.source_root / "docs"]
         self.target_graph_nodes: Set[str] = set()
         self.code_manifest: Set[str] = set()
