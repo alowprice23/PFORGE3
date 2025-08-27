@@ -1,73 +1,80 @@
 from __future__ import annotations
 from pathlib import Path
 import time
+import orjson
 
 from .base_agent import BaseAgent
-from pforge.validation.dep_graph import DependencyGraph
+from pforge.validation.test_runner import run_tests
+from pforge.orchestrator.signals import MsgType
 
 class ObserverAgent(BaseAgent):
     """
     The primary sensor of the pForge system.
 
-    The ObserverAgent continuously scans the sandbox repository to build an
-    "evidence snapshot" of its current state. This includes the dependency
-    graph, test coverage, linting issues, and other raw data needed for
-    the system's mathematical models.
+    The ObserverAgent's main job is to run the test suite and report
+    failures to the message bus.
     """
     name: str = "observer"
 
     def __init__(self, state_bus, efficiency_engine, source_root: Path | str):
         super().__init__(state_bus, efficiency_engine)
         self.source_root = Path(source_root)
-        self.dep_graph = DependencyGraph()
-
-    async def on_startup(self):
-        await super().on_startup()
-        # In a real run, we would load existing indices if they are not stale.
-        self.dep_graph.build_from_path(self.source_root)
+        self.last_test_run_time = 0
 
     async def on_tick(self):
         """
-        On each tick, the ObserverAgent generates a new evidence snapshot
-        and publishes it as an OBS.TICK event.
+        On each tick, run the test suite. If it fails, publish a
+        TESTS_FAILED event.
         """
-        self.logger.info("Observer tick: generating new evidence snapshot...")
+        # To avoid spamming test runs, only run every 5 seconds
+        if time.time() - self.last_test_run_time < 5:
+            return
 
-        # For now, we'll use dummy values for the snapshot
-        snap_sha = "dummy_snap_sha"
+        self.logger.info("Observer tick: running test suite...")
+        self.last_test_run_time = time.time()
 
-        # 2. Re-build the dependency graph (or check for staleness)
-        # For the foundational slice, we'll rebuild it on every tick.
-        self.dep_graph.build_from_path(self.source_root)
+        # Run all tests in the project
+        test_result = run_tests(test_nodes=[], source_root=self.source_root)
 
-        # 3. Gather other evidence (placeholders for now)
-        lint_issues = [] # Placeholder
-        test_outcomes = {} # Placeholder
-        entropy_inputs = {} # Placeholder
+        if test_result is None:
+            self.logger.error("Test runner failed to produce a result.")
+            return
 
-        # Find the first python file to report as the "problem"
-        # This is a simplification for the E2E test.
-        target_file = None
-        for file in self.source_root.rglob("*.py"):
-            target_file = file
-            break
+        if test_result.failed > 0:
+            self.logger.info(f"Test suite failed with {test_result.failed} failures.")
+            report_data = orjson.loads(test_result.report_content)
 
-        # 4. Assemble the payload for the OBS.TICK event
-        payload = {
-            "timestamp": time.time(),
-            "dependency_graph": self.dep_graph.graph,
-            "lint_issues": lint_issues,
-            "test_outcomes": test_outcomes,
-            "entropy_inputs": entropy_inputs,
-            "file_path": str(target_file) if target_file else str(self.source_root),
-            "description": "Observed project state."
-        }
+            failed_tests = []
+            test_file_paths = set()
 
-        # 5. Publish the event
-        await self.send_amp_event(
-            event_type="OBS.TICK",
-            payload=payload,
-            snap_sha=snap_sha,
-        )
+            for test in report_data.get("tests", []):
+                if test.get("outcome") == "failed":
+                    nodeid = test.get("nodeid")
+                    failed_tests.append({
+                        "nodeid": nodeid,
+                        "traceback": test.get("longrepr", "")
+                    })
+                    if nodeid:
+                        test_file_paths.add(nodeid.split("::")[0])
 
-        self.logger.info(f"Published OBS.TICK event for file: {payload.get('file_path')}")
+            payload = {
+                "timestamp": time.time(),
+                "failed_tests": failed_tests,
+                "test_file_paths": list(test_file_paths),
+                "full_report": test_result.report_content,
+            }
+
+            await self.send_amp_event(
+                event_type=MsgType.TESTS_FAILED.value,
+                payload=payload,
+                snap_sha=test_result.report_hash,
+            )
+            self.logger.info(f"Published TESTS_FAILED event with {len(failed_tests)} failures.")
+        else:
+            self.logger.info("Test suite passed.")
+            # Optionally, publish a TESTS_PASSED event
+            await self.send_amp_event(
+                event_type=MsgType.TESTS_PASSED.value,
+                payload={"timestamp": time.time()},
+                snap_sha=test_result.report_hash,
+            )

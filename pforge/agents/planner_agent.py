@@ -1,74 +1,93 @@
 from __future__ import annotations
 import logging
 import uuid
+from pathlib import Path
 
 from pforge.agents.base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType
 from pforge.messaging.amp import AMPMessage
-from pforge.messaging.redis_stream import stream_read_group, stream_ack
 
 logger = logging.getLogger(__name__)
 
 class PlannerAgent(BaseAgent):
     name = "planner_agent"
-    group_name = "planner_group"
 
     def _calculate_priority(self, event_payload: dict) -> float:
         """
         Calculates the priority of a fix task based on a formula.
-        P = (Impact * Frequency) / (Effort * Risk)
         """
-        # These values would be determined by other agents or analysis.
-        # For now, we use dummy values.
-        impact = event_payload.get("impact", 5) # Scale of 1-10
-        frequency = event_payload.get("frequency", 3) # Scale of 1-10
-        effort = event_payload.get("effort", 2) # Scale of 1-10
-        risk = event_payload.get("risk", 2) # Scale of 1-10
+        impact = event_payload.get("impact", 8)
+        frequency = event_payload.get("frequency", 5)
+        effort = event_payload.get("effort", 4)
+        risk = event_payload.get("risk", 3)
 
         if effort * risk == 0:
-            return float('inf') # Avoid division by zero
+            return float('inf')
 
         priority = (impact * frequency) / (effort * risk)
         return priority
 
+    def _infer_source_from_test(self, test_path_str: str) -> str:
+        """
+        Infers the source file path from a test file path.
+        """
+        test_path = Path(test_path_str)
+
+        # Remove 'tests/' prefix and 'test_' from filename
+        parts = list(test_path.parts)
+        if 'tests' in parts:
+            parts.remove('tests')
+
+        filename = parts[-1]
+        if filename.startswith("test_"):
+            parts[-1] = filename.replace("test_", "", 1)
+
+        # Reconstruct path, assuming it's relative to the project root
+        # For the E2E test, this will result in 'buggy_module.py'
+        if len(parts) == 1:
+            return parts[0]
+
+        return str(Path(*parts))
+
     async def on_tick(self):
         """
-        Listens for OBS.TICK events and dispatches FixTasks based on priority.
+        Listens for TESTS_FAILED events and dispatches FixTasks.
         """
-        messages = await stream_read_group(
-            self.redis_client,
-            self.group_name,
-            self.name,
-            {"pforge:amp:global:events": ">"}
-        )
+        amp_message = await self.state_bus.bus.subscribe("pforge:amp:global:events")
 
-        for stream, msg_id, amp_message in messages:
-            if amp_message.type == MsgType.OBS_TICK.value:
-                logger.info("PlannerAgent consumed OBS.TICK event.")
+        if amp_message.type == MsgType.TESTS_FAILED.value:
+            logger.info("PlannerAgent consumed TESTS_FAILED event.")
 
-                priority = self._calculate_priority(amp_message.payload)
-                logger.info(f"Calculated priority: {priority}")
+            payload = amp_message.payload
+            failed_tests = payload.get("failed_tests", [])
+            test_file_paths = payload.get("test_file_paths", [])
 
-                fix_task_payload = {
-                    "file_path": amp_message.payload.get("file_path", "example/buggy_file.py"),
-                    "description": amp_message.payload.get("description", "A placeholder bug description."),
-                    "priority": priority,
-                }
+            if not failed_tests or not test_file_paths:
+                return
 
-                fix_task_message = AMPMessage(
-                    type=MsgType.FIX_TASK.value,
-                    actor=self.name,
-                    snap_sha=amp_message.snap_sha,
-                    payload=fix_task_payload,
-                    op_id=str(uuid.uuid4())
-                )
+            first_failure = failed_tests[0]
+            first_test_file = test_file_paths[0]
 
-                logger.info(f"PlannerAgent dispatching FIX_TASK with payload: {fix_task_payload}")
-                await self.send_amp_event(
-                    event_type=fix_task_message.type,
-                    payload=fix_task_message.payload,
-                    snap_sha=fix_task_message.snap_sha,
-                )
-                logger.info(f"PlannerAgent dispatched a FixTask for file: {fix_task_payload.get('file_path')}")
+            inferred_source_path = self._infer_source_from_test(first_test_file)
 
-            await stream_ack(self.redis_client, stream, self.group_name, msg_id)
+            description = (
+                f"Fix the bug in '{inferred_source_path}' so that the test "
+                f"'{first_failure['nodeid']}' passes. The test failed with the "
+                f"following error:\n\n{first_failure['traceback']}"
+            )
+
+            priority = self._calculate_priority(payload)
+
+            fix_task_payload = {
+                "file_path": inferred_source_path,
+                "description": description,
+                "priority": priority,
+                "failed_test_nodeid": first_failure['nodeid'],
+            }
+
+            await self.send_amp_event(
+                event_type=MsgType.FIX_TASK.value,
+                payload=fix_task_payload,
+                snap_sha=amp_message.snap_sha,
+            )
+            logger.info(f"PlannerAgent dispatched a FixTask for file: {inferred_source_path}")

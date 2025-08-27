@@ -1,6 +1,5 @@
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
-redis==5.0.4
 pydantic==2.7.2
 libcst==1.4.0
 mypy==1.10.0
@@ -17,5 +16,10 @@ cryptography==42.0.8
 sqlite-utils==3.36
 tenacity==8.3.0
 PyJWT==2.8.0
-fakeredis[aioredis]==2.23.0
 python-socketio==5.11.2
+openai==1.30.4
+anthropic==0.25.6
+google-generativeai==0.5.4
+typer[all]==0.16.1
+pytest-asyncio==1.1.0
+pytest-json-report==1.5.0

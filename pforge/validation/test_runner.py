@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, NamedTuple, Optional
 import hashlib
 import uuid
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -25,33 +26,28 @@ class TestRunnerResult(NamedTuple):
 def run_tests(
     test_nodes: List[str],
     source_root: Path,
-    report_dir: Path = Path("pforge/var/test_reports")
-) -> Optional[TestRunResult]:
+    report_dir_name: str = "test_reports"
+) -> Optional[TestRunnerResult]:
     """
     Runs a set of specified tests using pytest.
-
-    This function is a secure wrapper that executes pytest, generates a
-    structured JSON report, and returns the parsed results.
-
-    Args:
-        test_nodes: A list of specific test nodes to run (e.g., "tests/test_x.py").
-                    If empty, all tests are run.
-        source_root: The root directory to run the tests from.
-        report_dir: The directory to store the JSON test report.
-
-    Returns:
-        A TestRunResult object, or None if the test run fails catastrophically.
     """
+    report_dir = source_root / report_dir_name
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"report-{uuid.uuid4()}.json"
 
     command = [
+        "python",
+        "-m",
         "pytest",
         "--json-report",
-        f"--json-report-file={report_path}",
+        f"--json-report-file={report_path.absolute()}",
     ] + test_nodes
 
     logger.info(f"Running tests with command: {' '.join(command)}")
+    logger.info(f"cwd: {source_root}")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f".:{env.get('PYTHONPATH', '')}"
 
     try:
         result = subprocess.run(
@@ -59,7 +55,8 @@ def run_tests(
             capture_output=True,
             text=True,
             cwd=source_root,
-            timeout=300 # 5 minute timeout
+            timeout=300, # 5 minute timeout
+            env=env,
         )
     except subprocess.TimeoutExpired as e:
         logger.error(f"Test run timed out: {e}")
@@ -68,12 +65,20 @@ def run_tests(
     if not report_path.exists():
         logger.error(f"Pytest did not generate a report file at {report_path}.")
         logger.error(f"Stderr: {result.stderr}")
+        logger.error(f"Stdout: {result.stdout}")
         return None
 
     # Parse the JSON report
     report_content = report_path.read_bytes()
     report_hash = hashlib.sha256(report_content).hexdigest()
-    report_data = orjson.loads(report_content)
+
+    try:
+        report_data = orjson.loads(report_content)
+    except orjson.JSONDecodeError:
+        logger.error("Failed to decode test report JSON.")
+        logger.error(f"Report content: {report_content.decode('utf-8', errors='ignore')}")
+        return None
+
 
     summary = report_data.get("summary", {})
 

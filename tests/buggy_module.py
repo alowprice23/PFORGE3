@@ -1,0 +1,1 @@
+\ndef buggy_function():\n    # This function is now fixed!\n    return 'fixed'\n

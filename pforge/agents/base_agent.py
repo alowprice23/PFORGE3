@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 import uuid
 
 from pforge.messaging.amp import AMPMessage
-from pforge.messaging.redis_stream import stream_add
 
 if TYPE_CHECKING:
     from pforge.orchestrator.state_bus import StateBus
@@ -14,11 +13,7 @@ if TYPE_CHECKING:
 class BaseAgent:
     """
     The abstract base class for all pForge agents.
-
-    It provides a common lifecycle FSM, hooks for subclasses to implement,
-    and high-level helpers for interacting with the AMP message bus.
     """
-    # --- Class attributes to be overridden by subclasses ---
     name: str = "base_agent"
     default_enabled: bool = True
     spawn_weight: float = 1.0
@@ -26,7 +21,6 @@ class BaseAgent:
     def __init__(self, state_bus: StateBus, efficiency_engine: EfficiencyEngine):
         self.state_bus = state_bus
         self.efficiency_engine = efficiency_engine
-        self.redis_client = state_bus.redis
         self.logger = logging.getLogger(f"pforge.agent.{self.name}")
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -67,7 +61,6 @@ class BaseAgent:
         """Stops the agent's processing loop gracefully."""
         if self._running and self._task:
             self._running = False
-            # Allow the current tick to finish, then cancel
             try:
                 await asyncio.wait_for(self._task, timeout=10.0)
             except asyncio.TimeoutError:
@@ -92,9 +85,5 @@ class BaseAgent:
             op_id=str(uuid.uuid4()),
             sig=None
         )
-        # In a full system, we'd sign the message here.
-        # message = sign_amp(message)
-
-        # Publish to the global event stream
-        await stream_add(self.redis_client, "pforge:amp:global:events", message)
-        self.logger.debug(f"Sent AMP event of type '{event_type}'.")
+        self.logger.info(f"Publishing event {event_type} with payload: {payload}")
+        await self.state_bus.bus.publish("pforge:amp:global:events", message)

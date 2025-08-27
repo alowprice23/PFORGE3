@@ -2,13 +2,15 @@ import typer
 import asyncio
 import logging
 from pathlib import Path
-from fakeredis import aioredis
+import orjson
 
 from pforge.agents.observer_agent import ObserverAgent
 from pforge.agents.planner_agent import PlannerAgent
 from pforge.agents.fixer_agent import FixerAgent
 from pforge.orchestrator.state_bus import StateBus, PuzzleState
 from pforge.orchestrator.efficiency_engine import EfficiencyEngine
+from pforge.messaging.in_memory_bus import InMemoryBus
+from pforge.messaging.amp import AMPMessage
 
 app = typer.Typer(
     name="doctor",
@@ -22,8 +24,8 @@ async def run_doctor_flow(project_path: Path):
 
     typer.echo(f"🩺 Starting pForge Doctor on: {project_path}")
 
-    redis_client = aioredis.FakeRedis(decode_responses=False)
-    state_bus = StateBus(redis_client=redis_client) # type: ignore
+    bus = InMemoryBus()
+    state_bus = StateBus(bus=bus)
     efficiency_engine = EfficiencyEngine(constants={})
 
     initial_state = PuzzleState(total_issues=1, total_tests=1)
@@ -31,11 +33,11 @@ async def run_doctor_flow(project_path: Path):
 
     observer = ObserverAgent(state_bus, efficiency_engine, source_root=project_path)
     planner = PlannerAgent(state_bus, efficiency_engine)
-    fixer = FixerAgent(state_bus, efficiency_engine)
+    fixer = FixerAgent(state_bus, efficiency_engine, source_root=project_path)
 
     typer.echo("-> ObserverAgent is starting...")
     observer.start()
-    await asyncio.sleep(1) # Give it a moment to run
+    await asyncio.sleep(1)
 
     typer.echo("-> PlannerAgent is starting...")
     planner.start()
@@ -43,29 +45,24 @@ async def run_doctor_flow(project_path: Path):
 
     typer.echo("-> FixerAgent is starting...")
     fixer.start()
+    await asyncio.sleep(1)
 
-    # Wait for the 'FIX_PATCH_APPLIED' event from the FixerAgent.
-    # This is a more robust way to wait than a simple sleep.
     typer.echo("-> Waiting for fix to be applied...")
-    fix_applied = False
-    for _ in range(10): # Timeout after 10 seconds
-        # We read the whole stream. Inefficient, but simple and fine for this.
-        messages = await redis_client.xread(streams={"pforge:amp:global:events": "0-0"})
-        if messages:
-            for stream_name, stream_messages in messages:
-                for message_id, message_data in stream_messages:
-                    # The message is a JSON string stored in the 'amp_json' field.
-                    # We check for the event type as a substring.
-                    if b'FIX_PATCH_APPLIED' in message_data.get(b'amp_json', b''):
-                        fix_applied = True
-                        break
-            if fix_applied:
+    fix_event = None
+    for _ in range(15): # Timeout after 15 seconds
+        try:
+            message: AMPMessage = await asyncio.wait_for(bus.get_queue("pforge:amp:global:events").get(), timeout=1.0)
+            if message.type in ("FIX.PATCH_APPLIED", "FIX.PATCH_REJECTED"):
+                fix_event = message
                 break
-        if fix_applied:
-            break
-        await asyncio.sleep(1)
+        except asyncio.TimeoutError:
+            pass
 
-    if not fix_applied:
+    if fix_event:
+        typer.echo(f"-> FixerAgent finished with event: {fix_event.type}")
+        if fix_event.type == "FIX.PATCH_REJECTED":
+             typer.echo("-> Fix was rejected. See logs for details.")
+    else:
         typer.echo("-> Timed out waiting for fix.")
 
     typer.echo("-> Stopping agents...")

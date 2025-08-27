@@ -3,7 +3,7 @@ import orjson
 from dataclasses import asdict, dataclass, field
 from typing import Dict
 
-import redis.asyncio as aioredis
+from pforge.messaging.in_memory_bus import InMemoryBus
 
 # A simple in-memory cache for the latest state to avoid hitting Redis for every read.
 _STATE_CACHE: Dict[str, PuzzleState] = {}
@@ -42,13 +42,13 @@ class PuzzleState:
 class StateBus:
     """
     Provides a simple pub/sub facade for the global PuzzleState.
-    It publishes state updates to a Redis stream and keeps a local cache
+    It publishes state updates to an in-memory bus and keeps a local cache
     for fast, read-only access.
     """
     STATE_STREAM = "pforge:state:global"
 
-    def __init__(self, redis_client: aioredis.Redis):
-        self.redis = redis_client
+    def __init__(self, bus: InMemoryBus):
+        self.bus = bus
 
     def get_snapshot(self, session_id: str = "default") -> PuzzleState:
         """
@@ -60,16 +60,10 @@ class StateBus:
 
     async def publish_update(self, state: PuzzleState, session_id: str = "default"):
         """
-        Updates the local cache and publishes the new state to the Redis stream.
+        Updates the local cache and publishes the new state to the in-memory bus.
         """
         _STATE_CACHE[session_id] = state
 
         # Serialize with orjson for performance and correctness
-        payload = orjson.dumps(asdict(state))
-
-        await self.redis.xadd(
-            self.STATE_STREAM,
-            {"state_json": payload},
-            maxlen=1000, # Keep a history of the last 1000 states
-            approximate=True
-        )
+        # In a real system, the message would be an AMPMessage
+        await self.bus.publish(self.STATE_STREAM, state)
