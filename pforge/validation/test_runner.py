@@ -43,9 +43,11 @@ def run_tests(
         A TestRunResult object, or None if the test run fails catastrophically.
     """
     report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / f"report-{uuid.uuid4()}.json"
+    report_path = (report_dir / f"report-{uuid.uuid4()}.json").resolve()
 
     command = [
+        "python",
+        "-m",
         "pytest",
         "--json-report",
         f"--json-report-file={report_path}",
@@ -67,7 +69,8 @@ def run_tests(
 
     if not report_path.exists():
         logger.error(f"Pytest did not generate a report file at {report_path}.")
-        logger.error(f"Stderr: {result.stderr}")
+        logger.error(f"--- Pytest Stdout ---\n{result.stdout}\n--- End Pytest Stdout ---")
+        logger.error(f"--- Pytest Stderr ---\n{result.stderr}\n--- End Pytest Stderr ---")
         return None
 
     # Parse the JSON report

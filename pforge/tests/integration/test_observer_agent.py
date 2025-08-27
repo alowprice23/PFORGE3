@@ -10,41 +10,48 @@ from pforge.orchestrator.efficiency_engine import EfficiencyEngine
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import MsgType
 
-import pytest
+from pforge.project import Project
+from pforge.config import Config
 
-@pytest.mark.skip(reason="This test is broken due to agent constructor signatures not matching BaseAgent.")
+
 @pytest.mark.asyncio
-async def test_observer_agent_detects_failure(monkeypatch):
+async def test_observer_agent_detects_failure():
     """
     Tests that the ObserverAgent can run tests and publish a TESTS_FAILED event.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         project_path = Path(tmpdir)
+        # The agent needs a pforge.toml to initialize Config
+        (project_path / "pforge.toml").write_text("")
 
         # Create a buggy file and a failing test
-        buggy_module_path = project_path / "buggy_module.py"
-        buggy_module_path.write_text("def buggy_function():\n    return 'bug'\n")
+        (project_path / "buggy_module.py").write_text("def buggy_function():\n    return 'bug'\n")
 
         tests_dir = project_path / "tests"
         tests_dir.mkdir()
-        test_file_path = tests_dir / "test_buggy_module.py"
-        test_file_path.write_text(
+        (tests_dir / "test_buggy_module.py").write_text(
             "from buggy_module import buggy_function\n"
             "def test_buggy_function_returns_fixed():\n"
             "    assert buggy_function() == 'fixed'\n"
         )
 
         bus = InMemoryBus()
-        observer = ObserverAgent(bus, source_root=project_path)
+        project = Project(project_path)
+        config = Config.load(project.root / "pforge.toml")
+
+        observer = ObserverAgent(bus=bus, config=config, project=project)
+
+        # Subscribe to the event stream to listen for the result
+        test_subscriber_name = "test_listener"
+        bus.subscribe(test_subscriber_name, MsgType.TESTS_FAILED.value)
 
         # Run the agent's on_tick method
         await observer.on_tick()
 
         # Check for the TESTS_FAILED event
-        try:
-            message = await asyncio.wait_for(bus.get_queue("pforge:amp:global:events").get(), timeout=1.0)
-            assert message.type == MsgType.TESTS_FAILED.value
-            assert len(message.payload['failed_tests']) == 1
-            assert message.payload['failed_tests'][0]['nodeid'] == 'tests/test_buggy_module.py::test_buggy_function_returns_fixed'
-        except asyncio.TimeoutError:
-            pytest.fail("ObserverAgent did not publish a TESTS_FAILED event.")
+        message = await bus.get(test_subscriber_name, timeout=2.0)
+
+        assert message is not None, "ObserverAgent did not publish a TESTS_FAILED event."
+        assert message.type == MsgType.TESTS_FAILED
+        assert len(message.payload['failed_tests']) == 1
+        assert message.payload['failed_tests'][0]['nodeid'] == 'tests/test_buggy_module.py::test_buggy_function_returns_fixed'
