@@ -12,7 +12,7 @@ Modules:
 - signals: Defines the data contracts for events.
 """
 
-from .core import Orchestrator, OrchestratorConfig
+from .core import Orchestrator
 from .agent_registry import AgentRegistry
 from .state_bus import StateBus, PuzzleState
 from .efficiency_engine import EfficiencyEngine
@@ -20,7 +20,6 @@ from . import signals
 
 __all__ = [
     "Orchestrator",
-    "OrchestratorConfig",
     "AgentRegistry",
     "StateBus",
     "PuzzleState",

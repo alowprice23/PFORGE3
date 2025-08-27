@@ -9,6 +9,7 @@ class MsgType(str, Enum):
     FIX_TASK = "task.fix"
     FIX_PATCH_APPLIED = "patch.applied"
     FIX_PATCH_REJECTED = "patch.rejected"
+    FIX_FAILED = "fix.failed"
     PREDICTIONS_MADE = "predictions.made"
     MISFIT_DETECTED = "misfit.detected"
     FALSE_PIECE_DETECTED = "false_piece.detected"

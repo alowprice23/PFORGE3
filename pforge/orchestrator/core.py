@@ -7,6 +7,7 @@ from pforge.agents.base_agent import BaseAgent
 from pforge.config import Config
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.agent_registry import AgentRegistry
+from pforge.orchestrator.signals import MsgType, Message
 from pforge.orchestrator.state_bus import StateBus, PuzzleState
 from pforge.project import Project
 from pforge.math_models.efficiency import compute_intelligent_efficiency
@@ -28,6 +29,7 @@ class Orchestrator:
         self.agent_registry = AgentRegistry()
         self.agents: List[BaseAgent] = []
         self.retry_counts: Dict[str, int] = {}
+        self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_REJECTED.value)
 
     def setup_agents(self):
         """
@@ -50,12 +52,15 @@ class Orchestrator:
 
         # Start the message bus
         bus_task = asyncio.create_task(self.bus.start(), name="InMemoryBus")
+        orchestrator_loop_task = asyncio.create_task(
+            self._message_loop(), name="OrchestratorLoop"
+        )
 
         # Start all registered agents
         agent_tasks = [asyncio.create_task(agent.run_loop()) for agent in self.agents]
 
         try:
-            await asyncio.gather(bus_task, *agent_tasks)
+            await asyncio.gather(bus_task, orchestrator_loop_task, *agent_tasks)
         except asyncio.CancelledError:
             logger.info("Orchestrator run cancelled.")
         finally:
@@ -63,8 +68,48 @@ class Orchestrator:
             for task in agent_tasks:
                 task.cancel()
             bus_task.cancel()
-            await asyncio.gather(bus_task, *agent_tasks, return_exceptions=True)
+            orchestrator_loop_task.cancel()
+            await asyncio.gather(
+                bus_task, orchestrator_loop_task, *agent_tasks, return_exceptions=True
+            )
             logger.info("Orchestrator finished.")
+
+    async def _message_loop(self):
+        """A loop for the orchestrator to process messages from the bus."""
+        while True:
+            try:
+                message = await self.bus.get("orchestrator")
+                if message:
+                    if message.type == MsgType.FIX_PATCH_REJECTED:
+                        await self._handle_fix_patch_rejected(message.payload)
+                await asyncio.sleep(0.1)  # Prevent busy-waiting
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in orchestrator message loop: {e}")
+
+    async def _handle_fix_patch_rejected(self, payload: Dict):
+        """Handles a rejected patch, implementing the retry logic."""
+        file_path = payload.get("file_path")
+        if not file_path:
+            logger.warning("FIX_PATCH_REJECTED message received without a file_path.")
+            return
+
+        current_retry_count = self.retry_counts.get(file_path, 0)
+        retry_limit = self.config.get("doctor.retry_limit", 3)
+
+        if current_retry_count < retry_limit:
+            self.retry_counts[file_path] = current_retry_count + 1
+            logger.info(
+                f"Retry {current_retry_count + 1}/{retry_limit} for bug in {file_path}."
+            )
+
+            fix_failed_message = Message(type=MsgType.FIX_FAILED, payload=payload)
+            await self.bus.publish(MsgType.FIX_FAILED.value, fix_failed_message)
+        else:
+            logger.error(
+                f"Could not fix bug in {file_path} after {retry_limit} attempts. Giving up."
+            )
 
     async def single_tick_update(self):
         """

@@ -104,8 +104,24 @@ class FixerAgent(BaseAgent):
             constraints=[ProofObligation(id="phi.sem.llm_fix_verified", ok=fix_is_ok)]
         )
 
-        result_msg_type = MsgType.FIX_PATCH_APPLIED if fix_is_ok else MsgType.FIX_PATCH_REJECTED
-        result_payload = {"file_path": file_path}
+        if fix_is_ok:
+            result_msg_type = MsgType.FIX_PATCH_APPLIED
+            result_payload = {"file_path": file_path}
+        else:
+            result_msg_type = MsgType.FIX_PATCH_REJECTED
+            # Extract traceback for the planner
+            traceback = "No verification result."
+            if verification_result and verification_result.report_content:
+                # For now, just pass the whole report content.
+                # A more sophisticated approach would parse this to find the specific error.
+                traceback = verification_result.report_content
+
+            result_payload = {
+                "file_path": file_path,
+                "description": description,
+                "failed_test_nodeid": failed_test_nodeid,
+                "traceback": traceback,
+            }
 
         result_message = Message(type=result_msg_type, payload=result_payload)
         result_message.payload["proof"] = proof.dict()
