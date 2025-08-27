@@ -1,89 +1,76 @@
 from __future__ import annotations
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
-import uuid
-
-from pforge.messaging.amp import AMPMessage
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pforge.orchestrator.state_bus import StateBus
-    from pforge.orchestrator.efficiency_engine import EfficiencyEngine
+    from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.orchestrator.state_bus import PuzzleState
 
-class BaseAgent:
+class BaseAgent(ABC):
     """
-    The abstract base class for all pForge agents.
-    """
-    name: str = "base_agent"
-    default_enabled: bool = True
-    spawn_weight: float = 1.0
+    Abstract base class for all agents in the pForge system.
 
-    def __init__(self, state_bus: StateBus, efficiency_engine: EfficiencyEngine):
-        self.state_bus = state_bus
-        self.efficiency_engine = efficiency_engine
+    Defines the basic lifecycle (setup, run, shutdown) and provides
+    a common interface for interacting with the message bus.
+    """
+    # --- Class-level metadata for the scheduler/registry ---
+    name: str = "base-agent"
+    tick_interval: float = 1.0  # Default seconds between on_tick calls
+
+    def __init__(self, bus: InMemoryBus):
+        if not bus:
+            raise ValueError("A message bus instance is required.")
+        self.bus = bus
         self.logger = logging.getLogger(f"pforge.agent.{self.name}")
-        self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._is_running = False
+
+    async def run_loop(self):
+        """The main execution loop for the agent, called by the Orchestrator."""
+        self._is_running = True
+        await self.on_startup()
+        self.logger.info("Agent '%s' started.", self.name)
+
+        while self._is_running:
+            try:
+                # In a full implementation, the agent would get the latest
+                # PuzzleState from the StateBus here. For now, on_tick is parameter-less.
+                await self.on_tick()
+            except asyncio.CancelledError:
+                self.logger.info("Agent '%s' was cancelled.", self.name)
+                break
+            except Exception:
+                self.logger.exception("An error occurred in agent '%s' on_tick.", self.name)
+
+            await asyncio.sleep(self.tick_interval)
+
+        await self.on_shutdown()
+        self.logger.info("Agent '%s' shut down.", self.name)
+
+    def stop(self):
+        """Signals the agent to stop its execution loop."""
+        self.logger.info("Stopping agent '%s'...", self.name)
+        self._is_running = False
+
+    # --- Hooks for subclasses to implement ---
 
     async def on_startup(self):
-        """Called once when the agent is first started."""
-        self.logger.info("Agent starting up.")
+        """Called once when the agent is starting up."""
+        pass
 
+    @abstractmethod
     async def on_tick(self):
-        """The main logic loop for the agent, called periodically."""
-        raise NotImplementedError("Subclasses must implement the on_tick method.")
+        """
+        The main logic of the agent, called periodically.
+        Subclasses must implement this method.
+        """
+        raise NotImplementedError
 
     async def on_shutdown(self):
         """Called once when the agent is shutting down."""
-        self.logger.info("Agent shutting down.")
+        pass
 
-    async def _run_loop(self, tick_interval: float):
-        """The internal run loop that manages the agent's lifecycle."""
-        self._running = True
-        await self.on_startup()
-
-        while self._running:
-            try:
-                await self.on_tick()
-            except Exception as e:
-                self.logger.exception(f"An error occurred in the on_tick method: {e}")
-            await asyncio.sleep(tick_interval)
-
-        await self.on_shutdown()
-
-    def start(self, tick_interval: float = 5.0):
-        """Starts the agent's main processing loop in a background task."""
-        if not self._running:
-            self._task = asyncio.create_task(self._run_loop(tick_interval))
-            self.logger.info(f"Agent '{self.name}' has been started.")
-
-    async def stop(self):
-        """Stops the agent's processing loop gracefully."""
-        if self._running and self._task:
-            self._running = False
-            try:
-                await asyncio.wait_for(self._task, timeout=10.0)
-            except asyncio.TimeoutError:
-                self._task.cancel()
-                self.logger.warning("Agent did not shut down gracefully, task was cancelled.")
-            self.logger.info(f"Agent '{self.name}' has been stopped.")
-
-    async def send_amp_event(
-        self,
-        event_type: str,
-        payload: Dict[str, Any],
-        snap_sha: str,
-        proof: Optional[Any] = None
-    ):
-        """Helper to construct and send a standard AMP event."""
-        message = AMPMessage(
-            type=event_type,
-            actor=self.name,
-            snap_sha=snap_sha,
-            payload=payload,
-            proof=proof,
-            op_id=str(uuid.uuid4()),
-            sig=None
-        )
-        self.logger.info(f"Publishing event {event_type} with payload: {payload}")
-        await self.state_bus.bus.publish("pforge:amp:global:events", message)
+    async def publish(self, topic: str, message: Any):
+        """A simple helper to publish a message to a topic on the bus."""
+        await self.bus.publish(topic, message)

@@ -1,0 +1,42 @@
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
+dist/
+build/
+
+# Node / TypeScript
+ui/node_modules/
+ui/dist/
+npm-debug.log*
+yarn.lock
+
+# Go
+bin/
+coverage.out
+
+# Docker / Compose
+*.log
+docker-compose.override.yml
+
+# Sandbox copies (generated at runtime)
+pforge/sandbox/
+pforge/var/
+pforge/logs/
+
+# Test artifacts
+.pytest_cache/
+coverage/
+*.coverage
+
+# IDE launch configs
+*.launch

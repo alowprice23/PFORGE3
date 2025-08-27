@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pforge"
+version = "3.0.0"
+authors = [
+  { name="pForge Contributors", email="contact@pforge.dev" },
+]
+description = "AI-powered code repair and refactoring engine"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pyyaml",
+    "libcst",
+    "mypy",
+    "ruff",
+    "black",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "httpx",
+    "jinja2",
+    "prometheus-client",
+    "networkx",
+    "orjson",
+    "cryptography",
+    "sqlite-utils",
+    "tenacity",
+    "PyJWT",
+    "python-socketio",
+    "openai",
+    "anthropic",
+    "google-generativeai",
+    "typer[all]",
+    "structlog"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/alowprice23/PFORGE"
+"Bug Tracker" = "https://github.com/alowprice23/PFORGE/issues"
+
+[project.scripts]
+pforge = "pforge.cli.main:app"
+
+[tool.setuptools]
+packages = ["pforge"]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "I", "UP", "B", "C4", "A", "RUF"]
+ignore = ["E501"]

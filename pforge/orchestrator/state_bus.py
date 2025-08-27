@@ -19,6 +19,7 @@ class PuzzleState:
     risk: float = 0.0
     backtracks: int = 0
     entropy: float = 0.0
+    decay: float = 0.0  # Confidence decay from getting stuck
     phi: int = 0  # Count of successfully removed false pieces
 
     # Operational metrics

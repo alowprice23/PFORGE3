@@ -3,12 +3,21 @@ from typing import Optional, Dict, Any
 from enum import Enum
 
 class MsgType(str, Enum):
-    OBS_TICK = "OBS.TICK"
-    TESTS_FAILED = "TESTS.FAILED"
-    TESTS_PASSED = "TESTS.PASSED"
-    FIX_TASK = "FIX.TASK"
-    FIX_PATCH_APPLIED = "FIX.PATCH_APPLIED"
-    FIX_PATCH_REJECTED = "FIX.PATCH_REJECTED"
+    OBS_TICK = "obs.tick"
+    TESTS_FAILED = "tests.failed"
+    TESTS_PASSED = "tests.passed"
+    FIX_TASK = "task.fix"
+    FIX_PATCH_APPLIED = "patch.applied"
+    FIX_PATCH_REJECTED = "patch.rejected"
+    PREDICTIONS_MADE = "predictions.made"
+    MISFIT_DETECTED = "misfit.detected"
+    FALSE_PIECE_DETECTED = "false_piece.detected"
+
+@dataclass
+class Message:
+    """A standardized message object for the in-memory bus."""
+    type: MsgType
+    payload: Dict[str, Any]
 
 # From proof/PLAN.md, this is needed by proof/bundle.py
 @dataclass

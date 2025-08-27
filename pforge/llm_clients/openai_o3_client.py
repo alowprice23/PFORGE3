@@ -1,86 +1,65 @@
 from __future__ import annotations
 import os
 import logging
-from typing import Dict, Any
+from typing import List, Dict, Any
 
 import openai
-from dotenv import load_dotenv
 
 from .retry import retry_llm
-from .budget_meter import BudgetMeter
+from .budget_meter import BudgetMeter, BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
 class OpenAIClient:
-    """
-    A client for interacting with OpenAI's models.
-    """
-    def __init__(self, budget_meter: BudgetMeter | None = None):
-        load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
-        self.api_key = os.environ.get("OPENAI_API_KEY")
-        if not self.api_key or self.api_key == "dummy_openai_key":
-            logger.warning("OpenAI API key not found or is a dummy key. Client will operate in offline mode.")
-            self.client = None
-        else:
-            self.client = openai.AsyncOpenAI(api_key=self.api_key)
+    """A client for interacting with OpenAI's models, with budget and retry support."""
+
+    def __init__(self, api_key: str | None, model: str = "gpt-4o-mini", budget_meter: BudgetMeter | None = None):
+        self.model = model
         self.budget_meter = budget_meter
 
+        if not api_key:
+            logger.warning("OpenAI API key not provided. Client will operate in offline/stub mode.")
+            self.client = None
+        else:
+            self.client = openai.AsyncOpenAI(api_key=api_key)
 
     @retry_llm()
-    async def generate(self, prompt: str, **kwargs) -> Dict[str, Any]:
+    async def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """
         Generates a response from an OpenAI model.
+
+        Args:
+            messages: A list of messages in the chat format, e.g., [{"role": "user", "content": "Hello"}].
+            **kwargs: Additional arguments to pass to the OpenAI API.
+
+        Returns:
+            The string content of the assistant's reply.
+
+        Raises:
+            BudgetExceededError: If the estimated token usage exceeds the budget.
+            openai.APIError: If the API call fails after retries.
         """
         if not self.client:
-            logger.info(f"Simulating OpenAI call for prompt (first 50 chars): '{prompt[:50]}...'")
-            # Return a hardcoded response if the client is not initialized
-            return {
-                "id": "chatcmpl-stub-123",
-                "object": "chat.completion",
-                "created": 1677652288,
-                "model": "gpt-4o-mini",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "This is a simulated response from the OpenAI stub client.",
-                        },
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {
-                    "prompt_tokens": 50,
-                    "completion_tokens": 50,
-                    "total_tokens": 100,
-                },
-            }
+            logger.info("Simulating OpenAI call (offline mode).")
+            # The FixerAgent expects a python markdown block.
+            return "```python\ndef my_buggy_function():\n    return 2\n```"
 
-        logger.info(f"Making OpenAI call for prompt (first 50 chars): '{prompt[:50]}...'")
+        # Estimate token usage for budget check
+        # A more accurate tokenizer would be better, but this is a reasonable proxy.
+        estimated_prompt_tokens = sum(len(m.get("content", "")) for m in messages) // 3
+        max_completion_tokens = kwargs.get("max_tokens", 1024)
+        estimated_total = estimated_prompt_tokens + max_completion_tokens
 
         if self.budget_meter:
-            # We can do a pre-check here if we want.
-            # For now, we will check and spend after the call.
-            pass
+            if not await self.budget_meter.spend(estimated_total):
+                raise BudgetExceededError(f"OpenAI call would exceed budget. Estimated tokens: {estimated_total}")
+
+        logger.info("Making OpenAI call to model '%s'...", self.model)
 
         response = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
+            model=self.model,
+            messages=messages,
             **kwargs
         )
 
-        completion_tokens = response.usage.completion_tokens
-        prompt_tokens_from_api = response.usage.prompt_tokens
-
-        if self.budget_meter:
-            # In a real scenario, we'd get the cost from config
-            cost_usd = 0.001
-            self.budget_meter.check_and_spend(
-                vendor="openai",
-                op_id="op_id_from_context", # This should be passed in
-                prompt_tokens=prompt_tokens_from_api,
-                completion_tokens=completion_tokens,
-                cost_usd=cost_usd
-            )
-
-        return response.model_dump()
+        return response.choices[0].message.content or ""

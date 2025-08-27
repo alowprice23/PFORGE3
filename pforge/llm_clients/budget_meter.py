@@ -1,7 +1,8 @@
 from __future__ import annotations
-import sqlite3
 import time
-from pathlib import Path
+from typing import Optional
+
+from redis.asyncio import Redis
 
 class BudgetExceededError(Exception):
     """Raised when an operation would exceed the allocated token budget."""
@@ -9,86 +10,61 @@ class BudgetExceededError(Exception):
 
 class BudgetMeter:
     """
-    Tracks and enforces token budgets for LLM API calls.
-
-    This class connects to a persistent SQLite database to maintain an
-    auditable ledger of all token spend.
+    Tracks and enforces token budgets for LLM API calls using a Redis-compatible API.
+    This implementation is designed for local-first operation, using fakeredis.
     """
+    STREAM_PREFIX = "pforge:budget:"
 
-    def __init__(self, db_path: Path | str, tenant: str = "default"):
-        """
-        Args:
-            db_path: The path to the SQLite database file for the budget ledger.
-            tenant: The tenant whose budget is being managed.
-        """
-        self.db_path = Path(db_path)
+    def __init__(self, tenant: str, daily_quota_tokens: int, redis_client: Redis):
+        if not redis_client:
+            raise ValueError("A Redis client instance is required.")
         self.tenant = tenant
-        self._ensure_db_and_schema()
-        # In a real system, quotas would be loaded from config/quotas.yaml
-        self.daily_quota = 1_500_000 # Placeholder default
+        self.daily_quota = daily_quota_tokens
+        self.redis = redis_client
 
-    def _ensure_db_and_schema(self):
-        """Ensures the database and its schema exist."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            # We assume the schema file is available relative to this package
-            # This is a bit fragile, but ok for the foundational slice.
-            schema_path = Path(__file__).parent.parent / "storage/sqlite/budget_ledger_schema.sql"
-            if schema_path.exists():
-                conn.executescript(schema_path.read_text())
-            else:
-                # Fallback schema if file not found
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS token_spend (
-                        id INTEGER PRIMARY KEY, ts REAL, vendor TEXT, op_id TEXT,
-                        prompt_tokens INTEGER, completion_tokens INTEGER, cost_usd REAL
-                    )
-                """)
+    def _get_daily_key(self) -> str:
+        """Generates a Redis key for the current day."""
+        today = time.strftime("%Y-%m-%d")
+        return f"{self.STREAM_PREFIX}{self.tenant}:{today}"
 
-    def check_and_spend(
-        self,
-        vendor: str,
-        op_id: str,
-        prompt_tokens: int,
-        completion_tokens: int,
-        cost_usd: float
-    ) -> bool:
+    async def spend(self, tokens: int) -> bool:
         """
-        Checks if the current spend is within budget and records it.
-        This is a simplified version; a real one would be more transactional.
+        Atomically checks if spending `tokens` would exceed the daily quota
+        and, if not, increments the daily usage. This version avoids Lua scripts
+        and uses a transaction pipeline compatible with fakeredis.
+
+        Returns:
+            bool: True if the spend was successful, False otherwise.
         """
-        # 1. Check current usage
-        with sqlite3.connect(self.db_path) as conn:
-            today_start = time.time() - (24 * 60 * 60)
-            cursor = conn.execute(
-                "SELECT SUM(prompt_tokens + completion_tokens) FROM token_spend WHERE ts >= ?",
-                (today_start,)
-            )
-            current_usage = cursor.fetchone()[0] or 0
+        key = self._get_daily_key()
 
-        total_spend = prompt_tokens + completion_tokens
+        # Use a transaction (MULTI/EXEC) to make the read-modify-write atomic.
+        # fakeredis supports this pattern.
+        async with self.redis.pipeline(transaction=True) as pipe:
+            try:
+                await pipe.watch(key)
+                current_usage = await pipe.get(key)
+                current_usage = int(current_usage) if current_usage else 0
 
-        # 2. Check against quota
-        if (current_usage + total_spend) > self.daily_quota:
-            return False
+                if current_usage + tokens > self.daily_quota:
+                    await pipe.unwatch()
+                    return False
 
-        # 3. Record the spend
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO token_spend (ts, vendor, op_id, prompt_tokens, completion_tokens, cost_usd)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (time.time(), vendor, op_id, prompt_tokens, completion_tokens, cost_usd)
-            )
-        return True
+                # Start the transaction
+                pipe.multi()
+                pipe.incrby(key, tokens)
+                pipe.expire(key, 86400) # Expire in 24 hours
 
-    def get_today_usage(self) -> int:
-        """Returns the total tokens used in the last 24 hours."""
-        with sqlite3.connect(self.db_path) as conn:
-            today_start = time.time() - (24 * 60 * 60)
-            cursor = conn.execute(
-                "SELECT SUM(prompt_tokens + completion_tokens) FROM token_spend WHERE ts >= ?",
-                (today_start,)
-            )
-            return cursor.fetchone()[0] or 0
+                await pipe.execute()
+                return True
+            except self.redis.exceptions.WatchError:
+                # The key was modified by another client after we WATCHed it.
+                # In a high-concurrency scenario, we might retry here.
+                # For our local agent model, this is unlikely to happen.
+                return False
+
+    async def get_today_usage(self) -> int:
+        """Returns the total tokens used in the current 24-hour period."""
+        key = self._get_daily_key()
+        usage = await self.redis.get(key)
+        return int(usage) if usage else 0

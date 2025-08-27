@@ -16,9 +16,7 @@ async def test_planner_agent_creates_fix_task(monkeypatch):
     produce a FIX_TASK event.
     """
     bus = InMemoryBus()
-    state_bus = StateBus(bus=bus)
-    efficiency_engine = EfficiencyEngine(constants={})
-    planner = PlannerAgent(state_bus, efficiency_engine)
+    planner = PlannerAgent(bus)
 
     # Simulate a TESTS_FAILED event
     failed_event = AMPMessage(
@@ -42,7 +40,7 @@ async def test_planner_agent_creates_fix_task(monkeypatch):
     try:
         message = await asyncio.wait_for(bus.get_queue("pforge:amp:global:events").get(), timeout=1.0)
         assert message.type == MsgType.FIX_TASK.value
-        assert message.payload['file_path'] == 'buggy_module.py'
+        assert message.payload['file_path'] == 'pforge/buggy_module.py'
         assert "Fix the bug" in message.payload['description']
     except asyncio.TimeoutError:
         pytest.fail("PlannerAgent did not publish a FIX_TASK event.")

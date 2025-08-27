@@ -1,3 +1,42 @@
+Metadata-Version: 2.4
+Name: pforge
+Version: 3.0.0
+Summary: AI-powered code repair and refactoring engine
+Author-email: pForge Contributors <contact@pforge.dev>
+Project-URL: Homepage, https://github.com/alowprice23/PFORGE
+Project-URL: Bug Tracker, https://github.com/alowprice23/PFORGE/issues
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: pydantic
+Requires-Dist: pyyaml
+Requires-Dist: libcst
+Requires-Dist: mypy
+Requires-Dist: ruff
+Requires-Dist: black
+Requires-Dist: pytest
+Requires-Dist: pytest-asyncio
+Requires-Dist: pytest-cov
+Requires-Dist: httpx
+Requires-Dist: jinja2
+Requires-Dist: prometheus-client
+Requires-Dist: networkx
+Requires-Dist: orjson
+Requires-Dist: cryptography
+Requires-Dist: sqlite-utils
+Requires-Dist: tenacity
+Requires-Dist: PyJWT
+Requires-Dist: python-socketio
+Requires-Dist: openai
+Requires-Dist: anthropic
+Requires-Dist: google-generativeai
+Requires-Dist: typer[all]
+Requires-Dist: structlog
+
 There are many possible sequences to reach the solution, but only a finite — and relatively small — number of valid assembly paths that work. Definitely not infinite.
 
 You said:

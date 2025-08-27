@@ -32,9 +32,7 @@ async def test_observer_agent_detects_failure(monkeypatch):
         )
 
         bus = InMemoryBus()
-        state_bus = StateBus(bus=bus)
-        efficiency_engine = EfficiencyEngine(constants={})
-        observer = ObserverAgent(state_bus, efficiency_engine, source_root=project_path)
+        observer = ObserverAgent(bus, source_root=project_path)
 
         # Run the agent's on_tick method
         await observer.on_tick()
