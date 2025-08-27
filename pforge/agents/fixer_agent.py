@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import os
+import re
 from typing import TYPE_CHECKING
 
 from .base_agent import BaseAgent
@@ -75,11 +76,14 @@ class FixerAgent(BaseAgent):
             logger.error(f"[FixerLog] LLM call failed: {e}")
             return
         logger.info("[FixerLog] LLM call complete.")
+        logger.info(f"[FixerLog] LLM response:\n---\n{corrected_content}\n---")
 
-        if corrected_content.startswith("```python"):
-            corrected_content = corrected_content[len("```python"):].strip()
-        if corrected_content.endswith("```"):
-            corrected_content = corrected_content[:-len("```")].strip()
+        # Use regex to find the content within the first python markdown block
+        match = re.search(r"```python\n(.*?)\n```", corrected_content, re.DOTALL)
+        if match:
+            corrected_content = match.group(1).strip()
+        else:
+            logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
 
         logger.info(f"[FixerLog] Applying potential fix to {file_path}")
         try:
