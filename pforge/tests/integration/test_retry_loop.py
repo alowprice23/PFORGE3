@@ -33,11 +33,14 @@ def project_with_retry_limit(tmp_path):
     return Project(project_root)
 
 
+from unittest.mock import patch, AsyncMock
+
 @pytest.mark.asyncio
-@patch("pforge.validation.test_runner.run_tests")
+@patch("pforge.agents.observer_agent.ObserverAgent.on_tick", new_callable=AsyncMock)
+@patch("pforge.agents.fixer_agent.run_tests")
 @patch("pforge.llm_clients.openai_o3_client.OpenAIClient.chat", new_callable=AsyncMock)
 async def test_retry_loop_generates_augmented_prompt_and_stops(
-    mock_llm_chat, mock_run_tests, project_with_retry_limit
+    mock_llm_chat, mock_run_tests, mock_observer_on_tick, project_with_retry_limit
 ):
     """
     Tests the full retry loop:

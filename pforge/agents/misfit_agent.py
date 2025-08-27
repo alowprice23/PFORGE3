@@ -2,7 +2,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import orjson
 from typing import TYPE_CHECKING
+from pathlib import Path
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -53,7 +55,11 @@ class MisfitAgent(BaseAgent):
         logger.info(f"MisfitAgent checking for misfits in {file_path_str}")
 
         try:
-            content = Path(file_path_str).read_text()
+            full_path = self.project.root / file_path_str
+            if not full_path.exists():
+                logger.warning(f"MisfitAgent could not find file to check: {full_path}")
+                return
+            content = full_path.read_text()
             symbols = self._extract_symbols(content)
         except Exception as e:
             logger.error(f"MisfitAgent could not read or parse {file_path_str}: {e}")
