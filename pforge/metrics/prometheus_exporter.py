@@ -4,7 +4,6 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 # This ensures that all metrics defined in the collector are registered
 # with the default Prometheus registry when this module is imported.
-from . import metrics_collector
 
 router = APIRouter()
 

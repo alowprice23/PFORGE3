@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 import uuid
 
 from pforge.messaging.amp import AMPMessage
-from pforge.messaging.redis_stream import get_redis_client, stream_add
+from pforge.messaging.redis_stream import stream_add
 
 if TYPE_CHECKING:
     from pforge.orchestrator.state_bus import StateBus
@@ -26,7 +26,7 @@ class BaseAgent:
     def __init__(self, state_bus: StateBus, efficiency_engine: EfficiencyEngine):
         self.state_bus = state_bus
         self.efficiency_engine = efficiency_engine
-        self.redis_client = get_redis_client()
+        self.redis_client = state_bus.redis
         self.logger = logging.getLogger(f"pforge.agent.{self.name}")
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -89,7 +89,8 @@ class BaseAgent:
             snap_sha=snap_sha,
             payload=payload,
             proof=proof,
-            op_id=str(uuid.uuid4())
+            op_id=str(uuid.uuid4()),
+            sig=None
         )
         # In a full system, we'd sign the message here.
         # message = sign_amp(message)

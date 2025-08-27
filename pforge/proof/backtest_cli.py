@@ -1,7 +1,6 @@
 from __future__ import annotations
 import typer
 import orjson
-from typing import Optional
 
 # This CLI is part of the main `pforge` app, but we define its logic here.
 # It would be registered in `cli/main.py`.
@@ -48,7 +47,7 @@ def verify(
 
             # This is a simplification. The signature is on the canonical string,
             # which we would need to reconstruct perfectly.
-            amp_event_json_for_signing = orjson.dumps(amp_event_dict, option=orjson.OPT_SORT_KEYS)
+            amp_event_json_for_signing = orjson.dumps(amp_event_dict, option=orjson.OPT_SORT_KEYS).decode('utf-8')
             amp_event_sig = amp_event_dict.get("sig", "")
 
             typer.echo(f"  Verifying proof from event op_id: {amp_event_dict.get('op_id')}...")

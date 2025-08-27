@@ -33,8 +33,8 @@ def run_preflight():
         console.print("  ✅ Redis connection: OK (using fakeredis)")
         console.print("\n[bold]Environment is ready for analysis.[/bold]")
 
-    except httpx.RequestError as e:
-        console.print(f"[bold red]Error:[/bold red] Could not connect to the pForge server.")
+    except httpx.RequestError:
+        console.print("[bold red]Error:[/bold red] Could not connect to the pForge server.")
     except httpx.HTTPStatusError as e:
         console.print(f"[bold red]Error:[/bold red] Server returned an error (Status {e.response.status_code}).")
 

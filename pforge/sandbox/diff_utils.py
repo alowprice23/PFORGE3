@@ -1,7 +1,7 @@
 from __future__ import annotations
 import difflib
 import orjson
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from pforge.storage.cas import read_blob
 

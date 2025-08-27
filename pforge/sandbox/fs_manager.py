@@ -3,7 +3,9 @@ import os
 import shutil
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Tuple, cast
+import time
+import orjson
 
 from pforge.storage.cas import write_blob, read_blob
 from .path_policy import is_path_safe
@@ -42,10 +44,10 @@ def _create_tree_object(worktree_path: Path) -> str:
 
     # The tree itself is a JSON blob, stored in the CAS.
     # Sorting ensures the hash is deterministic.
-    tree_content = sorted(entries, key=lambda x: x['path'])
+    tree_content = sorted(entries, key=lambda x: cast(str, x['path']))
     return write_blob(orjson.dumps(tree_content))
 
-def onboard_repo(source_path: str) -> str:
+def onboard_repo(source_path: Path | str) -> str:
     """
     Onboards a source repository into the pForge system.
 
@@ -58,14 +60,14 @@ def onboard_repo(source_path: str) -> str:
     Returns:
         The SHA of the initial commit object.
     """
-    source_path = Path(source_path)
-    if not source_path.is_dir():
-        raise SandboxError(f"Source path '{source_path}' is not a valid directory.")
+    source_path_p = Path(source_path)
+    if not source_path_p.is_dir():
+        raise SandboxError(f"Source path '{source_path_p}' is not a valid directory.")
 
-    logger.info(f"Onboarding repository from '{source_path}'...")
+    logger.info(f"Onboarding repository from '{source_path_p}'...")
 
     # Create the initial tree from the source files
-    tree_sha = _create_tree_object(source_path)
+    tree_sha = _create_tree_object(source_path_p)
 
     # Create the first commit object
     commit_data = {
@@ -80,12 +82,13 @@ def onboard_repo(source_path: str) -> str:
     logger.info(f"Onboarding complete. Initial commit SHA: {commit_sha}")
     return commit_sha
 
-def create_snapshot(worktree_path: str, parent_commit_sha: str, message: str) -> str:
+def create_snapshot(worktree_path: str | Path, parent_commit_sha: str, message: str) -> Tuple[str, str]:
     """
     Creates a new snapshot (commit) from the current state of a worktree.
+    Returns a tuple of (commit_sha, tree_sha).
     """
-    worktree_path = Path(worktree_path)
-    tree_sha = _create_tree_object(worktree_path)
+    worktree_path_p = Path(worktree_path)
+    tree_sha = _create_tree_object(worktree_path_p)
 
     commit_data = {
         "tree": tree_sha,
@@ -95,9 +98,9 @@ def create_snapshot(worktree_path: str, parent_commit_sha: str, message: str) ->
         "timestamp": time.time(),
     }
     commit_sha = write_blob(orjson.dumps(commit_data))
-    return commit_sha
+    return commit_sha, f"sha256:{tree_sha}"
 
-def checkout_snapshot(commit_sha: str, target_worktree_path: str):
+def checkout_snapshot(commit_sha: str, target_worktree_path: str | Path):
     """
     "Hydrates" a worktree directory with the files from a specific snapshot.
     Any existing content in the target directory is removed.
@@ -125,7 +128,7 @@ def checkout_snapshot(commit_sha: str, target_worktree_path: str):
 
     logger.info(f"Checked out snapshot for commit {commit_sha} to '{target_path}'.")
 
-def rollback(commit_sha: str, worktree_path: str):
+def rollback(commit_sha: str, worktree_path: str | Path):
     """Convenience function to revert a worktree to a specific snapshot."""
     logger.warning(f"Rolling back worktree '{worktree_path}' to commit {commit_sha}.")
     checkout_snapshot(commit_sha, worktree_path)

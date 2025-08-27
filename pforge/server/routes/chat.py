@@ -1,13 +1,13 @@
 from __future__ import annotations
 import asyncio
 import orjson
+import time
 from typing import AsyncGenerator, Dict
 
 from fastapi import APIRouter, Request, HTTPException
 from starlette.responses import StreamingResponse
 
 from pforge.messaging.redis_stream import get_redis_client
-from pforge.messaging.amp import AMPMessage
 
 router = APIRouter()
 redis_client = get_redis_client()
@@ -63,7 +63,7 @@ async def event_stream_generator(request: Request) -> AsyncGenerator[str, None]:
             break
 
         # Read from the streams, blocking for a short time
-        response = await redis_client.xread(streams_to_watch, count=10, block=1000)
+        response = await redis_client.xread(streams_to_watch, count=10, block=1000) # type: ignore
 
         if response:
             for stream_name_bytes, entries in response:

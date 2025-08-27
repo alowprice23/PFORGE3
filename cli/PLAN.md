@@ -22,11 +22,16 @@
 
 ## 2. File-by-File Blueprints
 
-### 2.1. `__init__.py`
+**Status Key:**
+*   `[ ]` - Not Started
+*   `[~]` - In Progress
+*   `[x]` - Completed
+
+### 2.1. `__init__.py` [x]
 
 *   **Responsibilities**: To mark the `cli/` directory as a Python package.
 
-### 2.2. `main.py`
+### 2.2. `main.py` [x]
 
 *   **Responsibilities**:
     *   To be the executable entry point for the `pforge` command (configured in `pyproject.toml`).
@@ -34,7 +39,7 @@
     *   To launch the interactive chat loop (`chat.py`) if `pforge` is run without a subcommand.
 *   **Tests**: Tested via end-to-end CLI tests that invoke the compiled `pforge` command.
 
-### 2.3. `chat.py`
+### 2.3. `chat.py` [ ]
 
 *   **Responsibilities**:
     *   To implement the conversational REPL.
@@ -44,7 +49,7 @@
 *   **Algorithms**: The core logic is a loop that reads input, makes an API call, and dispatches to a skill based on the response.
 *   **Tests**: A `test_chat.py` will use a mock API to test the intent-to-skill mapping logic for various simulated user inputs.
 
-### 2.4. `routes/` Subdirectory
+### 2.4. `routes/` Subdirectory [ ]
 
 This directory manages the CLI's knowledge of its own capabilities and history.
 
@@ -64,14 +69,14 @@ This directory manages the CLI's knowledge of its own capabilities and history.
 
 This directory contains the implementation of each subcommand. Each `.py` file corresponds to a `pforge` subcommand.
 
-*   **`status.py`**: Implements `pforge status`. It calls the `/metrics` endpoint and other status endpoints on the backend and formats the response into a human-readable summary of the system's health (E, H, agent status, etc.).
-*   **`doctor.py`**: Implements the `pforge doctor` command. This is the primary agentic loop of the CLI. It repeatedly senses the state, uses the learning policy (`agentic/policy.py`) to choose the next best skill, executes it, and records the outcome in the constellation memory, continuing until the system reaches a QED state.
-*   **`preflight.py`**: Implements `pforge preflight`. Triggers the backend `RecoveryAgent` to run its prerequisite checks and displays the results.
-*   **`fix.py`**: Implements `pforge fix`. A lower-level command to apply a specific patch or run a specific `Fixer` task.
-*   **`verify.py`**: Implements `pforge verify`. A wrapper around the `proof/backtest_cli.py` to run a full audit on a past session.
-*   **`routes.py`**: Implements `pforge routes`. Provides commands to inspect the constellation memory, showing the most effective learned routes for different contexts.
-*   **`proofs.py`**: Implements `pforge proofs`. Fetches and displays formatted proof bundles from the backend.
-*   **`budget.py`**: Implements `pforge budget`. Allows the user to view and, if authorized, adjust the token budgets for the LLM clients.
+*   **`status.py` [ ]**: Implements `pforge status`. It calls the `/metrics` endpoint and other status endpoints on the backend and formats the response into a human-readable summary of the system's health (E, H, agent status, etc.).
+*   **`doctor.py` [~]**: Implements the `pforge doctor` command. This is the primary agentic loop of the CLI. It repeatedly senses the state, uses the learning policy (`agentic/policy.py`) to choose the next best skill, executes it, and records the outcome in the constellation memory, continuing until the system reaches a QED state.
+*   **`preflight.py` [ ]**: Implements `pforge preflight`. Triggers the backend `RecoveryAgent` to run its prerequisite checks and displays the results.
+*   **`fix.py` [ ]**: Implements `pforge fix`. A lower-level command to apply a specific patch or run a specific `Fixer` task.
+*   **`verify.py` [ ]**: Implements `pforge verify`. A wrapper around the `proof/backtest_cli.py` to run a full audit on a past session.
+*   **`routes.py` [ ]**: Implements `pforge routes`. Provides commands to inspect the constellation memory, showing the most effective learned routes for different contexts.
+*   **`proofs.py` [ ]**: Implements `pforge proofs`. Fetches and displays formatted proof bundles from the backend.
+*   **`budget.py` [ ]**: Implements `pforge budget`. Allows the user to view and, if authorized, adjust the token budgets for the LLM clients.
 
 ### 2.6. `prompts/` Subdirectory
 

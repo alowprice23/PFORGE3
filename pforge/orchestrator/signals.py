@@ -1,5 +1,12 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
+from enum import Enum
+
+class MsgType(str, Enum):
+    OBS_TICK = "OBS.TICK"
+    FIX_TASK = "FIX.TASK"
+    FIX_PATCH_APPLIED = "FIX.PATCH_APPLIED"
+    FIX_PATCH_REJECTED = "FIX.PATCH_REJECTED"
 
 # From proof/PLAN.md, this is needed by proof/bundle.py
 @dataclass

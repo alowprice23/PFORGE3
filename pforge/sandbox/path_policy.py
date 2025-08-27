@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 from pathlib import Path
+from typing import Union
 
 def is_path_safe(path_to_check: Union[str, Path], sandbox_root: Union[str, Path]) -> bool:
     """

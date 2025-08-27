@@ -1,5 +1,5 @@
 from __future__ import annotations
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 import httpx
 import logging
 
@@ -13,18 +13,16 @@ TRANSIENT_ERRORS = (
     httpx.NetworkError,
 )
 
-def is_retryable_http_status(e: BaseException) -> bool:
+def is_retryable(e: BaseException) -> bool:
     """
-    Determines if an httpx.HTTPStatusError is retryable.
-    We retry on 5xx server errors and 429 Too Many Requests.
+    Determines if an exception is retryable.
+    We retry on transient network errors, 5xx server errors, and 429.
     """
     return (
-        isinstance(e, httpx.HTTPStatusError) and
-        (e.response.status_code >= 500 or e.response.status_code == 429)
+        isinstance(e, TRANSIENT_ERRORS) or
+        (isinstance(e, httpx.HTTPStatusError) and
+        (e.response.status_code >= 500 or e.response.status_code == 429))
     )
-
-# The combined condition for retrying
-retry_condition = retry_if_exception_type(TRANSIENT_ERRORS) | is_retryable_http_status
 
 def retry_llm(
     max_tries: int = 3,
@@ -44,11 +42,16 @@ def retry_llm(
     Returns:
         A decorator that can be applied to an async function.
     """
+    def before_sleep(retry_state):
+        if retry_state.outcome:
+            exc = retry_state.outcome.exception()
+            logger.warning(
+                f"Retrying LLM call (attempt {retry_state.attempt_number}) after error: {exc}"
+            )
+
     return retry(
         stop=stop_after_attempt(max_tries),
         wait=wait_exponential(multiplier=initial_wait_s, max=max_wait_s),
-        retry=retry_condition,
-        before_sleep=lambda retry_state: logger.warning(
-            f"Retrying LLM call (attempt {retry_state.attempt_number}) after error: {retry_state.outcome.exception()}"
-        )
+        retry=retry_if_exception(is_retryable),
+        before_sleep=before_sleep
     )

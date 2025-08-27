@@ -21,35 +21,40 @@
 
 ## 2. File-by-File Blueprints
 
-### 2.1. `__init__.py`
+**Status Key:**
+*   `[ ]` - Not Started
+*   `[~]` - In Progress
+*   `[x]` - Completed
+
+### 2.1. `__init__.py` [x]
 
 *   **Responsibilities**: To mark the `llm_clients/` directory as a Python package and to re-export the public client classes and the `retry` decorator.
 *   **Interfaces**: Provides the main entry points for the LLM client library.
 
-### 2.2. `gemini_client.py`
+### 2.2. `gemini_client.py` [ ]
 
 *   **Responsibilities**: To provide a simple, high-level client for Google's Gemini models.
     *   `__init__`: Initializes the official Google Generative AI client using an API key from the environment.
     *   `generate(prompt: str, ...)`: Takes a prompt string, formats it into the Gemini API's request schema, wraps the API call with the `@retry` decorator, performs budget checks via `budget_meter.py`, and parses the response to return a simple string.
 *   **Dependencies**: `retry.py`, `budget_meter.py`, `guardrails.py`.
 
-### 2.3. `claude_client.py`
+### 2.3. `claude_client.py` [ ]
 
 *   **Responsibilities**: To provide a client for Anthropic's Claude models. Its structure will be nearly identical to the Gemini client, but adapted for the Anthropic API schema and authentication.
 *   **Dependencies**: `retry.py`, `budget_meter.py`, `guardrails.py`.
 
-### 2.4. `openai_o3_client.py`
+### 2.4. `openai_o3_client.py` [~]
 
 *   **Responsibilities**: To provide a client for OpenAI's models. Its structure will be nearly identical to the other clients, but adapted for the OpenAI API schema and authentication.
 *   **Dependencies**: `retry.py`, `budget_meter.py`, `guardrails.py`.
 
-### 2.5. `retry.py`
+### 2.5. `retry.py` [x]
 
 *   **Responsibilities**: To provide a single, highly-reusable decorator `@retry_llm(...)`.
 *   **Algorithms**: It will use the `tenacity` library to implement exponential backoff with jitter. This is a standard algorithm for preventing thundering herd problems and gracefully handling transient network or service failures. The decorator will be configurable for the number of retries and the types of exceptions to catch.
 *   **Tests**: A `test_retry.py` will use a mock function that raises transient errors to assert that the decorator correctly retries the specified number of times with increasing delays.
 
-### 2.6. `budget_meter.py`
+### 2.6. `budget_meter.py` [x]
 
 *   **Responsibilities**:
     *   To provide a `BudgetMeter` class that can be instantiated per-operation or per-agent.
@@ -58,7 +63,7 @@
 *   **Data Models**: Interacts with the schema defined in `storage/sqlite/budget_ledger_schema.sql`.
 *   **Tests**: A `test_budget_meter.py` will use an in-memory SQLite database to test the spend/check logic, including cases of sufficient funds, insufficient funds, and concurrent requests.
 
-### 2.7. `guardrails.py`
+### 2.7. `guardrails.py` [ ]
 
 *   **Responsibilities**:
     *   To provide a `check_prompt_safety(prompt: str) -> SafetyReport` function.

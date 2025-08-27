@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Set, Dict, List
+from typing import Set, List, Optional
 import logging
 
 from .dep_graph import DependencyGraph
@@ -11,7 +11,7 @@ def select_tests(
     changed_files: Set[str],
     dep_graph: DependencyGraph,
     coverage_index: CoverageIndex,
-    guard_tests: Set[str] = None
+    guard_tests: Optional[Set[str]] = None
 ) -> List[str]:
     """
     Selects a minimal but sound subset of tests to run based on code changes.

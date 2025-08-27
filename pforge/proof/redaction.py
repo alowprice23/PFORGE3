@@ -1,6 +1,6 @@
 from __future__ import annotations
 import re
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Tuple
 
 # In a real system, these patterns would be loaded from a config file
 # like `policies/redaction/patterns.yaml` and would be much more extensive.

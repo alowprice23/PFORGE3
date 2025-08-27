@@ -1,11 +1,14 @@
 from __future__ import annotations
 import os
-import orjson
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 import redis.asyncio as redis
+from redis.exceptions import ResponseError
 import fakeredis.aioredis
 from .amp import AMPMessage
+import logging
+
+logger = logging.getLogger(__name__)
 
 # A singleton client instance to be shared across the application.
 _redis_client = None
@@ -44,8 +47,9 @@ async def stream_add(
         message: The AMPMessage object to add.
         max_len: The approximate maximum length of the stream.
     """
+    logger.info(f"Adding message of type {message.type} to stream {stream_name}")
     payload = {"amp_json": message.to_json()}
-    await redis_client.xadd(stream_name, payload, maxlen=max_len, approximate=True)
+    await redis_client.xadd(stream_name, payload, maxlen=max_len, approximate=True) # type: ignore
 
 async def stream_read_group(
     redis_client: redis.Redis,
@@ -77,7 +81,7 @@ async def stream_read_group(
     for stream in streams.keys():
         try:
             await redis_client.xgroup_create(stream, group_name, id="0", mkstream=True)
-        except redis.exceptions.ResponseError as e:
+        except ResponseError as e:
             if "BUSYGROUP" not in str(e):
                 raise
 
@@ -85,10 +89,12 @@ async def stream_read_group(
     response = await redis_client.xreadgroup(
         group_name,
         consumer_name,
-        streams,
+        streams, # type: ignore
         count=count,
         block=block_ms
     )
+
+    logger.info(f"xreadgroup response: {response}")
 
     if not response:
         return []
@@ -96,7 +102,11 @@ async def stream_read_group(
     messages = []
     for stream_name, entries in response:
         for message_id, fields in entries:
-            amp_message = AMPMessage.from_json(fields[b'amp_json'])
+            amp_json = fields.get(b'amp_json')
+            if not amp_json:
+                logger.warning(f"Message {message_id} in stream {stream_name} is missing 'amp_json' field. Fields: {fields}")
+                continue
+            amp_message = AMPMessage.from_json(amp_json)
             messages.append((stream_name.decode('utf-8'), message_id.decode('utf-8'), amp_message))
 
     return messages

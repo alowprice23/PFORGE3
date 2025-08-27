@@ -9,6 +9,7 @@ from .middleware.redaction import RedactionMiddleware
 from .middleware.throttle import ThrottleMiddleware
 from .routes import chat, files, metrics, proofs
 from .websocket.consumer import attach_ws_to_app
+from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -44,8 +45,6 @@ async def health_check():
     A simple health check endpoint to confirm the server is running.
     """
     return {"status": "ok"}
-
-from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

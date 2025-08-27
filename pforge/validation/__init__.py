@@ -18,7 +18,7 @@ from .dep_graph import DependencyGraph
 from .coverage_index import CoverageIndex
 from .selection import select_tests
 from .types import run_delta_typecheck, TypeCheckResult
-from .test_runner import run_tests, TestRunResult
+from .test_runner import run_tests, TestRunnerResult
 
 __all__ = [
     "DependencyGraph",
@@ -27,5 +27,5 @@ __all__ = [
     "run_delta_typecheck",
     "TypeCheckResult",
     "run_tests",
-    "TestRunResult",
+    "TestRunnerResult",
 ]

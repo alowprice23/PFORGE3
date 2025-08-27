@@ -6,7 +6,7 @@ from typing import Dict
 
 import redis
 
-from .state_bus import StateBus, PuzzleState
+from .state_bus import StateBus
 from .efficiency_engine import EfficiencyEngine
 from .agent_registry import AgentRegistry
 

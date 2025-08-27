@@ -1,12 +1,12 @@
 from __future__ import annotations
 import logging
-from typing import List, Dict, Callable, Set, Tuple
+from typing import Dict, Callable, Set, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
 # A simple representation of a prerequisite check
 class Prerequisite:
-    def __init__(self, name: str, check_func: Callable[[], bool], dependencies: Set[str] = None):
+    def __init__(self, name: str, check_func: Callable[[], bool], dependencies: Optional[Set[str]] = None):
         self.name = name
         self.check_func = check_func
         self.dependencies = dependencies or set()

@@ -32,7 +32,7 @@ def show_proof(
         console.print(rich_json)
 
     except httpx.RequestError as e:
-        console.print(f"[bold red]Error:[/bold red] Could not connect to the pForge server.")
+        console.print("[bold red]Error:[/bold red] Could not connect to the pForge server.")
         console.print(f"Details: {e}")
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:

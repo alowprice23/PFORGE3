@@ -5,7 +5,8 @@ from fastapi import APIRouter, HTTPException
 # for storing and retrieving proof bundles by their operation ID.
 # For the foundational slice, we'll use a simple in-memory dictionary
 # as a placeholder for this database.
-_PROOF_STORE = {}
+from typing import Dict, Any
+_PROOF_STORE: Dict[str, Any] = {}
 
 router = APIRouter()
 

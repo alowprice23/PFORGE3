@@ -2,7 +2,7 @@ from __future__ import annotations
 import orjson
 import time
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -30,12 +30,6 @@ class AMPMessage(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict, description="The main data payload of the event.")
     proof: Optional[ProofBundle] = Field(None, description="An optional, verifiable proof bundle associated with the event's claims.")
     sig: Optional[str] = Field(None, description="A cryptographic signature of the event content.")
-
-    # Pydantic model config
-    model_config = {
-        "json_loads": orjson.loads,
-        "json_dumps": orjson.dumps
-    }
 
     def to_json(self) -> str:
         """Serializes the message to a compact JSON string."""

@@ -22,15 +22,20 @@
 
 ## 2. File-by-File Blueprints
 
+**Status Key:**
+*   `[ ]` - Not Started
+*   `[~]` - In Progress
+*   `[x]` - Completed
+
 This section provides a detailed, implementation-ready blueprint for each of the 16 files in the `agents/` directory.
 
-### 2.1. `__init__.py`
+### 2.1. `__init__.py` [x]
 
 *   **Responsibilities**: To mark the `agents/` directory as a Python package and to facilitate the discovery mechanism used by the `agent_registry`. It eagerly imports all agent modules to ensure they are registered.
 *   **Data Models**: Exports `AGENT_CLASSES`, a dictionary mapping agent names to their class definitions for tooling and inspection.
 *   **Interfaces**: Provides the `BaseAgent` class and `AGENT_CLASSES` dictionary to the `orchestrator/agent_registry.py`.
 
-### 2.2. `base_agent.py`
+### 2.2. `base_agent.py` [x]
 
 *   **Responsibilities**:
     *   To define the abstract `BaseAgent` class that all other agents inherit from.
@@ -42,7 +47,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Security**: Will contain a placeholder or hook for checking capability tokens before executing privileged actions.
 *   **Tests**: Unit test the lifecycle transitions, the AMP helper methods with mock messages, and the delta publishing helpers.
 
-### 2.3. `observer_agent.py`
+### 2.3. `observer_agent.py` [x]
 
 *   **Responsibilities**: To be the primary sensor of the pForge system. It continuously observes the state of the sandbox repository and produces the raw data needed for metrics.
     *   It builds and maintains the evidence graph: the dependency graph (G) and test-to-file coverage map (K).
@@ -52,7 +57,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It computes the raw time-series data `(I_t, H_raw_t, test_outcomes_t)` that feeds the `EfficiencyAnalyst`.
 *   **Interfaces**: Consumes file system events. Publishes to the AMP bus. Uses tools from `validation/` and `tools/`.
 
-### 2.4. `spec_oracle_agent.py`
+### 2.4. `spec_oracle_agent.py` [x]
 
 *   **Responsibilities**: To act as the ultimate arbiter of correctness by evaluating the specification constraints (Φ).
     *   It parses specification documents (`docs/`, OpenAPI schemas) to build its internal representation of Φ.
@@ -61,7 +66,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It is the direct implementation of the `Φ` evaluation function. Its output is a vector of booleans corresponding to the satisfaction of each `φ_i`.
 *   **Interfaces**: Consumes `FIX.PATCH_APPLIED` events. Produces `SPEC.CHECKED` events. May use `proof/` modules to construct its proof bundles.
 
-### 2.5. `predictor_agent.py`
+### 2.5. `predictor_agent.py` [ ]
 
 *   **Responsibilities**: To model and predict risk, guiding the Planner away from wasteful actions.
     *   It maintains the risk prior `β_m` for each module `m` in the codebase.
@@ -70,7 +75,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It implements the learning model for the risk prior `β`.
 *   **Interfaces**: Consumes `FIX.PATCH_APPLIED` and `CONFLICT.FOUND` events to learn. Provides risk data to the `PlannerAgent`. Uses `llm_clients/` for its learning model.
 
-### 2.6. `planner_agent.py`
+### 2.6. `planner_agent.py` [~]
 
 *   **Responsibilities**: To decide what to do next. It is the economic core of pForge.
     *   It consumes the current state (Σ), risk priors (β), and available budgets.
@@ -80,7 +85,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It implements the Priority formula `P` and the knapsack optimization.
 *   **Interfaces**: Consumes inputs from nearly all other agents (via the state bus). Dispatches tasks to `Fixer`, `Misfit`, etc.
 
-### 2.7. `fixer_agent.py`
+### 2.7. `fixer_agent.py` [~]
 
 *   **Responsibilities**: To execute concrete, safe code transformations.
     *   It receives `FixTask` commands from the Planner.
@@ -91,7 +96,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It applies the transformation `τ` and is responsible for producing the proof that `τ` upholds the relevant constraints in `Φ`.
 *   **Interfaces**: Consumes tasks from `Planner`. Uses `tools/`, `validation/`, and `llm_clients/`. Produces patch-related AMP events.
 
-### 2.8. `misfit_agent.py`
+### 2.8. `misfit_agent.py` [ ]
 
 *   **Responsibilities**: To reduce stylistic and structural entropy (`H_style`, `H_struct`).
     *   It detects stylistic deviations (e.g., formatting, import order) by comparing file style vectors to the project's mean.
@@ -99,7 +104,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It is the actuator for reducing the Mahalanobis distance `D_M` of style vectors, thus lowering `H_style`.
 *   **Interfaces**: Uses `tools/formatters.py`.
 
-### 2.9. `false_piece_agent.py`
+### 2.9. `false_piece_agent.py` [ ]
 
 *   **Responsibilities**: To identify and remove extraneous code, dependencies, or other artifacts.
     *   It uses heuristics (reachability analysis, file size) and an LLM-based classifier to find "false pieces".
@@ -107,7 +112,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It implements the classifier `F(x)` for extraneous pieces and is responsible for the `φ` reward term in the efficiency formula by successfully removing junk.
 *   **Interfaces**: Uses the dependency graph from `validation/` and the file system from `sandbox/`.
 
-### 2.10. `backtracker_agent.py`
+### 2.10. `backtracker_agent.py` [ ]
 
 *   **Responsibilities**: To manage the state space search and execute rollbacks.
     *   When the `ConflictDetector` identifies an unsatisfiable state, the `Backtracker` receives the minimal hitting set of culpable edits.
@@ -115,7 +120,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It executes the "retract" step in the search algorithm, effectively pruning a bad branch from the A* search tree.
 *   **Interfaces**: Consumes events from `ConflictDetector`. Uses `storage/cas.py` to perform rollbacks.
 
-### 2.11. `conflict_detector_agent.py`
+### 2.11. `conflict_detector_agent.py` [ ]
 
 *   **Responsibilities**: To find contradictions between applied patches and the specification Φ.
     *   It consumes `SPEC.CHECKED` events that report violations.
@@ -124,7 +129,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It builds the conflict set Γ and computes the minimal hitting set, a classic set theory problem.
 *   **Interfaces**: Consumes events from `SpecOracle`. Produces `CONFLICT.FOUND` events for the `Backtracker`.
 
-### 2.12. `efficiency_analyst_agent.py`
+### 2.12. `efficiency_analyst_agent.py` [ ]
 
 *   **Responsibilities**: The designated scorekeeper for the entire system.
     *   It is the sole consumer of the fine-grained delta signals (`ΔE`, `ΔM`, etc.).
@@ -134,7 +139,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It performs the summation part of the `E_intelligent` formula, accumulating the raw error terms before the final calculation.
 *   **Interfaces**: Consumes delta signals from all other agents. Triggers `efficiency_engine`.
 
-### 2.13. `intent_router_agent.py`
+### 2.13. `intent_router_agent.py` [ ]
 
 *   **Responsibilities**: To serve as the natural language interface for the system.
     *   It consumes raw text from the chat UI or CLI.
@@ -143,7 +148,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It implements the softmax policy over embeddings to classify user intent.
 *   **Interfaces**: Consumes user input from `server/`. Publishes intents to the AMP bus. Uses `llm_clients/`.
 
-### 2.14. `recovery_agent.py`
+### 2.14. `recovery_agent.py` [ ]
 
 *   **Responsibilities**: To ensure the system's environment is stable *before* code analysis begins.
     *   It orchestrates the preflight checks defined in `recovery/preflight.py`.
@@ -152,7 +157,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It is the executor of the prerequisite lattice fixpoint calculation `μ = lfp(F)`.
 *   **Interfaces**: Uses modules from the `recovery/` directory.
 
-### 2.15. `self_repair_agent.py`
+### 2.15. `self_repair_agent.py` [ ]
 
 *   **Responsibilities**: A meta-agent that monitors the health of pForge itself.
     *   It periodically checks for stale indices (coverage, dependency graph) and triggers rebuilds.
@@ -161,7 +166,7 @@ This section provides a detailed, implementation-ready blueprint for each of the
 *   **Math Representation**: It works to minimize the process entropy (`H_process`) of the pForge system itself.
 *   **Interfaces**: Interacts with `validation/` and `storage/` to manage indices and caches.
 
-### 2.16. `summarizer_agent.py`
+### 2.16. `summarizer_agent.py` [~]
 
 *   **Responsibilities**: To provide human-readable explanations of the system's actions.
     *   It consumes complex proof bundles and diffs.

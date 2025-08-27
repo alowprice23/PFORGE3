@@ -21,11 +21,16 @@
 
 ## 2. File-by-File Blueprints
 
-### 2.1. `__init__.py`
+**Status Key:**
+*   `[ ]` - Not Started
+*   `[~]` - In Progress
+*   `[x]` - Completed
+
+### 2.1. `__init__.py` [x]
 
 *   **Responsibilities**: To mark the `tests/` directory as a Python package, allowing `pytest` to discover the test modules within its subdirectories.
 
-### 2.2. `unit/` Subdirectory
+### 2.2. `unit/` Subdirectory [ ]
 
 This directory contains fast-running tests that check components in isolation.
 
@@ -41,24 +46,24 @@ This directory contains fast-running tests that check components in isolation.
 
 This directory contains tests that verify the contracts between modules.
 
-*   **`onboarding_flow_test.py`**: Tests the flow of onboarding a new repository, verifying that `sandbox/fs_manager.py` correctly interacts with `storage/cas.py`.
-*   **`solve_cycle_test.py`**: Tests the primary agent loop, simulating an `OBS.TICK` event and verifying that it correctly flows through the `PlannerAgent`, `FixerAgent`, and `SpecOracleAgent`, resulting in a valid `FIX.PATCH_APPLIED` event.
-*   **`merge_conflict_test.py`**: Tests the conflict resolution flow, simulating a `SPEC.CHECKED` failure and verifying that the `ConflictDetector` and `Backtracker` agents correctly collaborate to resolve it.
-*   **`targeted_then_full_test.py`**: Tests the "fast but honest" validation policy. It will simulate a patch where targeted tests pass but a full audit fails, and assert that the `QEDSupervisor` does not fire until the full audit passes.
-*   **`recovery_preflight_test.py`**: Tests the `recovery/preflight.py` engine with mock detectors and actions to ensure it correctly plans and executes a remediation sequence.
-*   **`throttle_control_test.py`**: Tests the PI controller in the `Orchestrator` by feeding it simulated latency data and asserting that it correctly adjusts the agent concurrency.
+*   **`onboarding_flow_test.py` [ ]**: Tests the flow of onboarding a new repository, verifying that `sandbox/fs_manager.py` correctly interacts with `storage/cas.py`.
+*   **`solve_cycle_test.py` [~]**: Tests the primary agent loop, simulating an `OBS.TICK` event and verifying that it correctly flows through the `PlannerAgent`, `FixerAgent`, and `SpecOracleAgent`, resulting in a valid `FIX.PATCH_APPLIED` event. This is covered by `test_agent_flow.py`.
+*   **`merge_conflict_test.py` [ ]**: Tests the conflict resolution flow, simulating a `SPEC.CHECKED` failure and verifying that the `ConflictDetector` and `Backtracker` agents correctly collaborate to resolve it.
+*   **`targeted_then_full_test.py` [ ]**: Tests the "fast but honest" validation policy. It will simulate a patch where targeted tests pass but a full audit fails, and assert that the `QEDSupervisor` does not fire until the full audit passes.
+*   **`recovery_preflight_test.py` [ ]**: Tests the `recovery/preflight.py` engine with mock detectors and actions to ensure it correctly plans and executes a remediation sequence.
+*   **`throttle_control_test.py` [ ]**: Tests the PI controller in the `Orchestrator` by feeding it simulated latency data and asserting that it correctly adjusts the agent concurrency.
 
 ### 2.4. `e2e/` Subdirectory
 
 This directory contains tests that treat the entire application as a black box.
 
-*   **`smoke_local_no_docker.py`**: The most basic e2e test. It executes the `scripts/local_boot.sh` script to start the server, then makes an HTTP request to the `/metrics` endpoint and asserts that it gets a 200 OK response. This verifies that the application can start without crashing.
-*   **`qed_gate_end_to_end.py`**: The most comprehensive test. It will programmatically:
+*   **`smoke_local_no_docker.py` [ ]**: The most basic e2e test. It executes the `scripts/local_boot.sh` script to start the server, then makes an HTTP request to the `/metrics` endpoint and asserts that it gets a 200 OK response. This verifies that the application can start without crashing.
+*   **`qed_gate_end_to_end.py` [~]**: The most comprehensive test. It will programmatically:
     1.  Start the pForge server.
     2.  Use the `/files/onboard` API to submit the `demo_buggy/` project.
     3.  Use the `/chat/nl` API to send the command "doctor this project".
     4.  Poll the `/chat/events` stream until it sees a `QED.EMITTED` event.
-    5.  Download the final, fixed files and assert that the bugs have been corrected.
+    5.  Download the final, fixed files and assert that the bugs have been corrected. This is covered by `test_doctor_command.py`.
 
 ---
 

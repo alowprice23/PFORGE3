@@ -4,11 +4,12 @@ import logging
 import orjson
 from pathlib import Path
 from typing import List, NamedTuple, Optional
+import hashlib
 import uuid
 
 logger = logging.getLogger(__name__)
 
-class TestRunResult(NamedTuple):
+class TestRunnerResult(NamedTuple):
     """
     Holds the structured result of a test run.
     """
@@ -46,7 +47,7 @@ def run_tests(
 
     command = [
         "pytest",
-        f"--json-report",
+        "--json-report",
         f"--json-report-file={report_path}",
     ] + test_nodes
 
@@ -76,7 +77,7 @@ def run_tests(
 
     summary = report_data.get("summary", {})
 
-    return TestRunResult(
+    return TestRunnerResult(
         exit_code=result.returncode,
         passed=summary.get("passed", 0),
         failed=summary.get("failed", 0),

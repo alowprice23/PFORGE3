@@ -3,7 +3,7 @@ import orjson
 from dataclasses import asdict, dataclass, field
 from typing import Dict
 
-import redis
+import redis.asyncio as aioredis
 
 # A simple in-memory cache for the latest state to avoid hitting Redis for every read.
 _STATE_CACHE: Dict[str, PuzzleState] = {}
@@ -47,7 +47,7 @@ class StateBus:
     """
     STATE_STREAM = "pforge:state:global"
 
-    def __init__(self, redis_client: redis.Redis):
+    def __init__(self, redis_client: aioredis.Redis):
         self.redis = redis_client
 
     def get_snapshot(self, session_id: str = "default") -> PuzzleState:
@@ -58,7 +58,7 @@ class StateBus:
         # Return a copy to prevent mutation of the cached object
         return PuzzleState(**asdict(_STATE_CACHE.get(session_id, PuzzleState())))
 
-    def publish_update(self, state: PuzzleState, session_id: str = "default"):
+    async def publish_update(self, state: PuzzleState, session_id: str = "default"):
         """
         Updates the local cache and publishes the new state to the Redis stream.
         """
@@ -67,7 +67,7 @@ class StateBus:
         # Serialize with orjson for performance and correctness
         payload = orjson.dumps(asdict(state))
 
-        self.redis.xadd(
+        await self.redis.xadd(
             self.STATE_STREAM,
             {"state_json": payload},
             maxlen=1000, # Keep a history of the last 1000 states

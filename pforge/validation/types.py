@@ -38,7 +38,7 @@ def run_delta_typecheck(
     # 1. Determine the full set of files to check
     # This includes the changed files plus any files that depend on them.
     # We assume file paths are relative to the source_root for the graph.
-    changed_modules = {str(p.relative_to(source_root)) for p in changed_files}
+    changed_modules = {str(Path(p).relative_to(source_root)) for p in changed_files}
     impacted_modules = dep_graph.get_reverse_closure(changed_modules)
 
     files_to_check = [str(source_root / m.replace('.', '/')) + '.py' for m in impacted_modules]

@@ -2,7 +2,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
-from typing import Dict, Set, List
+from typing import Dict, Set
 import logging
 
 logger = logging.getLogger(__name__)

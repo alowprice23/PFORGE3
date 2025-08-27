@@ -18,9 +18,10 @@ class RedactionMiddleware(BaseHTTPMiddleware):
             return response
 
         # Get the response body. This is a bit tricky with FastAPI/Starlette.
-        response_body = b""
-        async for chunk in response.body_iterator:
-            response_body += chunk
+        if hasattr(response, 'body'):
+            response_body = response.body
+        else:
+            response_body = b""
 
         if not response_body:
             return response

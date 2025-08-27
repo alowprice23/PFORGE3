@@ -1,4 +1,5 @@
 import typer
+from .skills import status, proofs, preflight, doctor
 
 app = typer.Typer(
     name="pforge",
@@ -6,11 +7,10 @@ app = typer.Typer(
     add_completion=False,
 )
 
-from .skills import status, proofs, preflight
-
 app.add_typer(status.app, name="status")
 app.add_typer(proofs.app, name="proofs")
 app.add_typer(preflight.app, name="preflight")
+app.add_typer(doctor.app, name="doctor")
 
 
 @app.callback(invoke_without_command=True)

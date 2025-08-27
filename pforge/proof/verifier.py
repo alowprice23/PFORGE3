@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import Dict, Any, List
+from typing import List
 
 from .bundle import ProofBundle
 from .signatures import verify_hmac_sha256 # Or your chosen signature implementation
