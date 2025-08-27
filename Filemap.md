@@ -17,6 +17,7 @@ pforge/
 ├─ pyproject.toml                              – tooling pins (ruff/black/mypy/pytest) (optional)
 │
 ├─ config/
+│  ├─ PLAN.md
 │  ├─ settings.yaml                            – ports, feature flags, local-only, cadence, controller targets
 │  ├─ llm_providers.yaml                       – model names/endpoints, cost per-token, max context, safety flags
 │  ├─ agents.yaml                              – enabled agents, spawn weights, retry bounds, capability scopes
@@ -26,6 +27,7 @@ pforge/
 │  └─ policies.yaml                            – gating policy (blocking vs non-blocking φ, QED window, CVaR α)
 │
 ├─ policies/
+│  ├─ PLAN.md
 │  ├─ signing/
 │  │  ├─ public.pem                            – event verification key
 │  │  └─ rotate.md                             – key rotation process
@@ -34,6 +36,7 @@ pforge/
 │     └─ samples.md                            – examples & tests for redaction
 │
 ├─ orchestrator/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ core.py                                  – tick loop; global snapshot Σ; op_id generation; CAS bindings
 │  ├─ scheduler.py                             – adaptive economy; PI controller; concurrency updates
@@ -45,6 +48,7 @@ pforge/
 │  └─ router.py                                – logical routing: file vs directory edit strategy via dep graph
 │
 ├─ proof/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ bundle.py                                – build/validate proof bundles; attach tree_sha & venv_lock_sha
 │  ├─ verifier.py                              – backtesting verifier (recompute hashes, test proofs, signatures)
@@ -54,11 +58,13 @@ pforge/
 │  └─ backtest_cli.py                          – `pforge verify` across a session; KPIs (Precision@Action, escapes)
 │
 ├─ messaging/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ amp.py                                   – AMP schema, event codecs; idempotency keys
 │  └─ redis_stream.py                          – Redis Streams wrapper; WS mirror hook
 │
 ├─ storage/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ cas.py                                   – content-addressed snapshot store; trees, diffs, blobs
 │  ├─ sqlite/
@@ -68,6 +74,7 @@ pforge/
 │  └─ fslock.py                                – file/dir locks for atomic write in sandbox/var
 │
 ├─ planner/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ priority.py                              – Impact×Frequency / (Effort×Risk); CVaR formulation
 │  ├─ solver_ilp.py                            – exact knapsack (if available); records approx gaps
@@ -76,6 +83,7 @@ pforge/
 │  └─ objectives.py                            – multi-objective blend (ΔE, stability, risk penalties)
 │
 ├─ validation/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ selection.py                             – targeted test selection (RDep + coverage) with guards
 │  ├─ types.py                                 – delta typecheck (mypy/pyright subset runner)
@@ -84,6 +92,7 @@ pforge/
 │  └─ dep_graph.py                             – import graph indexer (LibCST); reverse-closure utils
 │
 ├─ recovery/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ preflight.py                             – prerequisite lattice μ; unsat core; fixpoint loop
 │  ├─ detectors/
@@ -105,6 +114,7 @@ pforge/
 │     └─ migrate_seed.py                       – sandbox DB migrations & seed with checksums
 │
 ├─ agents/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ base_agent.py                            – lifecycle; AMP helpers; bounded retries
 │  ├─ observer_agent.py                        – evidence graph; entropy H; metrics sampling
@@ -122,7 +132,8 @@ pforge/
 │  ├─ self_repair_agent.py                     – periodic health checks; index refresh; cache warm
 │  └─ summarizer_agent.py                      – user-facing diffs/explanations; terse, verifiable summaries
 │
-├─ tools/                                      – safe code transforms (Fixer operators)
+├─ tools/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ imports.py                               – localize/break cycles; reorder; remove unused
 │  ├─ typing.py                                – add stubs; narrow casts; typing imports
@@ -131,6 +142,7 @@ pforge/
 │  └─ ast_utils.py                             – LibCST wrappers; idempotent edits; edit distance
 │
 ├─ llm_clients/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ gemini_client.py                         – high-context reader; safety preface; local-only guard
 │  ├─ claude_client.py                         – chain-of-thought coder (tool prompts); guardrails
@@ -140,6 +152,7 @@ pforge/
 │  └─ guardrails.py                            – refuse on secrets/egress/capability misuse
 │
 ├─ sandbox/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ fs_manager.py                            – copy repo→sandbox; worktrees; snapshot/rollback
 │  ├─ diff_utils.py                            – unified diff + color; summary for CLI
@@ -147,6 +160,7 @@ pforge/
 │  └─ path_policy.py                           – enforce sandbox scope; traversal protection
 │
 ├─ server/
+│  ├─ PLAN.md
 │  ├─ app.py                                   – FastAPI entrypoint; WS bridge (AMP/metrics)
 │  ├─ middleware/
 │  │  ├─ auth.py                               – JWT/API key
@@ -167,6 +181,7 @@ pforge/
 │     └─ chat.html                             – conversational CLI UI
 │
 ├─ ui/
+│  ├─ PLAN.md
 │  ├─ public/
 │  │  └─ favicon.ico
 │  └─ src/
@@ -184,6 +199,7 @@ pforge/
 │     └─ utils/llmColors.ts
 │
 ├─ cli/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ main.py                                  – `pforge` entrypoint; conversational loop
 │  ├─ chat.py                                  – NL intent parser; grounding; safety prompts
@@ -206,11 +222,13 @@ pforge/
 │     └─ summarizer_style.md                   – terse, verifiable diffs & rationale
 │
 ├─ metrics/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ metrics_collector.py                     – push counters/gauges; register KPIs
 │  └─ prometheus_exporter.py                   – serve /metrics; labels for agents & stages
 │
 ├─ docs/
+│  ├─ PLAN.md
 │  ├─ architecture.md                          – end-to-end diagrams; agents; bus; CAS
 │  ├─ runbook.md                               – on-call procedures; failure drills
 │  ├─ api_reference.md                         – REST/WS; AMP schemas
@@ -220,6 +238,7 @@ pforge/
 │  └─ backtesting_guide.md                     – how to verify all claims locally
 │
 ├─ tests/
+│  ├─ PLAN.md
 │  ├─ __init__.py
 │  ├─ unit/
 │  │  ├─ test_efficiency_engine.py
@@ -247,6 +266,7 @@ pforge/
 │  └─ fix_aioredis_direct.py                   – py3.12 compat shim (if needed)
 │
 ├─ devops/
+│  ├─ PLAN.md
 │  ├─ k8s/                                     – optional cloud manifests
 │  │  ├─ namespace.yaml
 │  │  ├─ deployment.yaml
@@ -260,13 +280,15 @@ pforge/
 │     └─ docker_build.yml
 │
 ├─ data/
+│  ├─ PLAN.md
 │  ├─ sample_repos/
 │  │  └─ tiny_todo_app.zip
 │  └─ puzzlebench/
 │     ├─ metadata.json
 │     └─ repos/                               – *.tar.gz sample repos for benchmarking
 │
-├─ var/                                        – runtime artifacts (git-ignored)
+├─ var/
+│  ├─ PLAN.md
 │  ├─ index/
 │  │  ├─ coverage.json                         – last coverage map (with SHA)
 │  │  └─ dep_graph.json                        – import graph index (with SHA)
@@ -277,6 +299,7 @@ pforge/
 │     └─ constellation.sqlite                  – route memory; nonces; budget ledger
 │
 └─ verifiers/
+   ├─ PLAN.md
    ├─ __init__.py
    ├─ precision_at_action.py                   – recompute Precision@Action from proofs
    ├─ escape_rate.py                           – targeted→full audit escapes
