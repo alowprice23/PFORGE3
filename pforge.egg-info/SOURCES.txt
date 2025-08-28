@@ -1,5 +1,6 @@
 README.md
 pyproject.toml
+pforge/__init__.py
 pforge/config.py
 pforge/project.py
 pforge.egg-info/PKG-INFO
@@ -8,3 +9,4 @@ pforge.egg-info/dependency_links.txt
 pforge.egg-info/entry_points.txt
 pforge.egg-info/requires.txt
 pforge.egg-info/top_level.txt
+tests/test_cli.py

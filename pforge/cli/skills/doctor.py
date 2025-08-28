@@ -1,44 +1,29 @@
 import typer
 import asyncio
-import logging
+from pforge.agentic.loop import AgenticLoop, Observation
+from pforge.memory.constellation import Constellation
 from pathlib import Path
-
-from pforge.config import Config
-from pforge.project import Project
-from pforge.orchestrator.core import Orchestrator
+import os
 
 app = typer.Typer(
     name="doctor",
     help="Runs the end-to-end diagnosis and repair workflow on a project.",
 )
 
-logger = logging.getLogger(__name__)
-
 async def run_doctor_flow(project_path: Path):
-    """Sets up and runs the orchestrator for the doctor command."""
-
+    """Sets up and runs the agentic loop for the doctor command."""
     typer.echo(f"🩺 Starting pForge Doctor on: {project_path}")
 
-    try:
-        config = Config.load()
-    except FileNotFoundError:
-        typer.echo("🚨 Error: pforge.toml not found in the current directory.")
-        typer.echo("Please create one or run `pforge init`.")
-        raise typer.Exit(code=1)
+    db_path_str = os.getenv("PFORGE_DB_PATH", str(Path.home() / ".pforge" / "constellation.sqlite"))
+    db_path = Path(db_path_str)
 
-    project = Project(project_path)
+    memory = Constellation(db_path=db_path)
+    agentic_loop = AgenticLoop(memory=memory)
 
-    orchestrator = Orchestrator(config, project)
-    orchestrator.setup_agents()
-
-    # In a real scenario, the orchestrator might run indefinitely or until a
-    # specific condition is met. For this CLI command, we might run it for a
-    # fixed duration, for a single loop, or until a fix is found.
-    # Here, we'll just run it and let the user stop with Ctrl+C.
-    await orchestrator.run()
+    obs = Observation.from_env(target_path=project_path)
+    agentic_loop.plan_act_learn(obs, doctor_mode=True)
 
     typer.echo("✅ Doctor workflow complete.")
-
 
 @app.command()
 def run(
@@ -58,6 +43,8 @@ def run(
     except KeyboardInterrupt:
         typer.echo("\nGracefully shutting down pForge Doctor...")
     except Exception as e:
-        logger.error(f"An error occurred during the doctor workflow: {e}", exc_info=True)
         typer.echo(f"🚨 Error: {e}")
         raise typer.Exit(code=1)
+
+if __name__ == "__main__":
+    app()

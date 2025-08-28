@@ -1,64 +1,122 @@
 from __future__ import annotations
-import time
-import orjson
+import asyncio
+import json
+import logging
+import os
+import subprocess
 from pathlib import Path
+from typing import Dict, Set
 
+import libcst as cst
+
+from pforge.orchestrator.state_bus import PuzzleState
 from .base_agent import BaseAgent
-from pforge.validation.test_runner import run_tests
-from pforge.orchestrator.signals import MsgType, Message
+
+SANDBOX_ROOT = Path(os.getenv("SANDBOX_ROOT", "sandbox_test"))
+
+logger = logging.getLogger("agent.observer")
 
 class ObserverAgent(BaseAgent):
-    """
-    The primary sensor of the pForge system. It runs the test suite and
-    reports failures to the message bus to kick off the repair cycle.
-    """
-    name: str = "observer"
-    tick_interval: float = 5.0  # Run tests every 5 seconds
+    name = "observer"
+    weight = 1.0
+    spawn_threshold = 0.20
+    retire_threshold = -0.10
+    max_tokens_tick = 6_000
+    tick_interval = 5.0
 
-    def __init__(self, bus, config, project):
-        super().__init__(bus, config, project)
-        self.source_root = self.project.root
+    _parsed_files: Set[Path] = set()
+    _last_git_hash: str | None = None
 
-    async def on_tick(self):
-        """
-        On each tick, run the test suite. If it fails, publish a
-        TESTS_FAILED event.
-        """
-        self.logger.info("Running test suite...")
+    async def on_startup(self) -> None:
+        logger.info("ObserverAgent starting initial crawl")
+        if not SANDBOX_ROOT.exists():
+            SANDBOX_ROOT.mkdir(exist_ok=True)
+        await self._full_crawl()
 
-        test_result = run_tests(test_nodes=[], source_root=self.source_root)
+    async def on_tick(self, state: PuzzleState) -> None:
+        changed = self._sandbox_diff()
+        if changed:
+            await self._incremental_crawl(changed)
 
-        if test_result is None:
-            self.logger.error("Test runner failed to produce a result.")
+        entropy_score = self._calc_entropy()
+        await self.dH(entropy_score - state.entropy)
+
+        if state.tick % 3 == 0:
+            await self.send_amp(
+                action="file_manifest",
+                payload={"files": [str(p.relative_to(SANDBOX_ROOT)) for p in self._parsed_files]},
+                broadcast=True,
+            )
+
+    async def _full_crawl(self) -> None:
+        files = list(SANDBOX_ROOT.rglob("*.*"))
+        await self._parse_files(files)
+        self._update_git_hash()
+        logger.info("ObserverAgent full crawl complete: %d files", len(files))
+
+    async def _incremental_crawl(self, changed: Set[Path]) -> None:
+        if not changed:
             return
+        await self._parse_files(changed)
+        self._update_git_hash()
+        logger.debug("ObserverAgent incremental crawl: %d files", len(changed))
 
-        if test_result.failed > 0:
-            self.logger.info(f"Test suite failed with {test_result.failed} failures.")
+    async def _parse_files(self, files) -> None:
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(None, self._parse_single, f) for f in files]
+        await asyncio.gather(*tasks)
+        self._parsed_files.update(files)
 
-            try:
-                report_data = orjson.loads(test_result.report_content)
-            except orjson.JSONDecodeError:
-                self.logger.error("Failed to decode test report JSON.")
-                return
+    def _parse_single(self, file_path: Path) -> None:
+        try:
+            if file_path.suffix in {".py"}:
+                with file_path.open("r", encoding="utf-8") as f:
+                    src = f.read()
+                module = cst.parse_module(src)
+                todo_count = src.count("TODO") + src.count("FIXME")
+                if todo_count:
+                    asyncio.run(self.dE(todo_count))
+        except Exception as exc:
+            logger.warning("Parse failed for %s: %s", file_path, exc)
 
-            failed_tests = []
-            for test in report_data.get("tests", []):
-                if test.get("outcome") == "failed":
-                    failed_tests.append({
-                        "nodeid": test.get("nodeid"),
-                        "traceback": test.get("longrepr", "")
-                    })
+    def _sandbox_diff(self) -> Set[Path]:
+        if not (SANDBOX_ROOT / ".git").exists():
+            return set()
 
-            if failed_tests:
-                message = Message(
-                    type=MsgType.TESTS_FAILED,
-                    payload={
-                        "failed_tests": failed_tests,
-                    }
-                )
-                await self.publish(MsgType.TESTS_FAILED.value, message)
-                self.logger.info(f"Published TESTS_FAILED event with {len(failed_tests)} failures.")
-        else:
-            self.logger.info("Test suite passed.")
-            message = Message(type=MsgType.TESTS_PASSED, payload={})
-            await self.publish(MsgType.TESTS_PASSED.value, message)
+        new_hash = subprocess.check_output(
+            ["git", "-C", str(SANDBOX_ROOT), "rev-parse", "HEAD"], text=True
+        ).strip()
+        if self._last_git_hash == new_hash:
+            return set()
+
+        if self._last_git_hash is None:
+            self._last_git_hash = new_hash
+            return set()
+
+        output = subprocess.check_output(
+            ["git", "-C", str(SANDBOX_ROOT), "diff", "--name-only", self._last_git_hash, "HEAD"],
+            text=True,
+        )
+        changed = {SANDBOX_ROOT / line.strip() for line in output.splitlines() if line.strip()}
+        return changed
+
+    def _update_git_hash(self) -> None:
+        if (SANDBOX_ROOT / ".git").exists():
+            self._last_git_hash = subprocess.check_output(
+                ["git", "-C", str(SANDBOX_ROOT), "rev-parse", "HEAD"], text=True
+            ).strip()
+
+    def _calc_entropy(self) -> float:
+        todos = sum(
+            1
+            for p in self._parsed_files
+            if p.exists() and "TODO" in p.read_text(encoding="utf-8", errors="ignore")
+        )
+        if not self._parsed_files:
+            return 0.0
+        import math
+
+        prob = todos / len(self._parsed_files) if self._parsed_files else 0
+        if prob == 0 or prob == 1:
+            return 0.0
+        return -prob * math.log2(prob) - (1 - prob) * math.log2(1 - prob) if prob > 0 and prob < 1 else 0.0

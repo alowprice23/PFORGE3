@@ -1,5 +1,3 @@
-fastapi
-uvicorn[standard]
 pydantic
 pyyaml
 libcst
@@ -10,7 +8,6 @@ pytest
 pytest-asyncio
 pytest-cov
 httpx
-jinja2
 prometheus-client
 networkx
 orjson
@@ -18,9 +15,10 @@ cryptography
 sqlite-utils
 tenacity
 PyJWT
-python-socketio
 openai
 anthropic
 google-generativeai
 typer[all]
 structlog
+fakeredis[aioredis]
+fastapi

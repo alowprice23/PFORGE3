@@ -51,7 +51,7 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     """
     project_dir = e2e_project
     project = Project(project_dir)
-    config = Config.load(path=project_dir / "pforge.toml")
+    config = load_config()
 
     # --- Mock the LLM response ---
     correct_code = "def my_buggy_function():\n    return 2\n"

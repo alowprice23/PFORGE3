@@ -1,91 +1,119 @@
 from __future__ import annotations
+import asyncio
+import hashlib
+import json
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Set
-import orjson
+from typing import Dict, List, Set
 
 from .base_agent import BaseAgent
-from pforge.orchestrator.signals import MsgType, Message
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 
-if TYPE_CHECKING:
-    from pforge.messaging.in_memory_bus import InMemoryBus
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("agent.falsepiece")
+SANDBOX_ROOT = Path(os.getenv("SANDBOX_ROOT", "sandbox_test"))
+QUAR_DIR = SANDBOX_ROOT / ".quarantine"
 
 class FalsePieceAgent(BaseAgent):
-    """
-    Detects files that are likely dead, unused, or extraneous code.
-    """
     name = "false_piece"
-    tick_interval: float = 30.0  # This is a heavy operation, run it infrequently
+    weight = 0.7
+    spawn_threshold = 0.08
+    retire_threshold = -0.02
+    max_tokens_tick = 4_000
+    tick_interval = 20.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
-        super().__init__(bus, config, project)
-        self.source_root = self.project.root
-
-        budget_meter = BudgetMeter(
-            tenant="pforge-dev",
-            daily_quota_tokens=1_000_000,
-            redis_client=self.bus.redis_client
-        )
+    async def on_startup(self) -> None:
+        QUAR_DIR.mkdir(exist_ok=True)
         self.llm_client = OpenAIClient(
             api_key=os.getenv("OPENAI_API_KEY"),
-            budget_meter=budget_meter
+            budget_meter=BudgetMeter(tenant="pforge-dev", daily_quota=1_000_000)
         )
+        self.hash_index: Dict[str, Path] = {}
+        logger.info("FalsePieceAgent ready")
 
-    def _find_unreferenced_files(self) -> Set[Path]:
-        """Uses grep to find files that are not referenced by any other file."""
-        candidates = set()
-        all_files = list(self.source_root.rglob("*.py")) # Focus on Python files for now
-
-        for file_path in all_files:
-            if file_path.name == "__init__.py":
-                continue
-
-            # Grep for the module name (without extension)
-            module_name = file_path.stem
-            try:
-                # Search for the module name in all other files
-                cmd = f"grep -r --exclude='{file_path.name}' '{module_name}' ."
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=self.source_root)
-                if result.returncode == 1 and not result.stdout:
-                    # Grep returns 1 if no lines are selected
-                    candidates.add(file_path)
-            except Exception as e:
-                logger.error(f"Error running grep for {file_path}: {e}")
-
-        return candidates
-
-    async def on_tick(self):
-        logger.info("FalsePieceAgent scanning for unreferenced files...")
-        candidate_files = self._find_unreferenced_files()
-
-        for file_path in candidate_files:
-            await self._verify_and_report(file_path)
-
-    async def _verify_and_report(self, file_path: Path):
-        prompt = (
-            f"You are a code maintenance expert. The file '{file_path.relative_to(self.source_root)}' "
-            "is not referenced by any other Python file in the project.\n\n"
-            "Is this file likely to be dead or unused code that can be safely deleted?\n\n"
-            "Respond with a single JSON object with one key:\n"
-            '1. "is_false_piece": boolean (true if it is likely dead code, false otherwise)'
-        )
-
-        try:
-            response_text = await self.llm_client.chat([{"role": "user", "content": prompt}])
-            verdict = orjson.loads(response_text)
-            if verdict.get("is_false_piece") is True:
-                logger.warning(f"False piece detected: {file_path}")
-
-                message = Message(
-                    type="false_piece.detected", # New MsgType
-                    payload={"file_path": str(file_path)}
+    async def on_tick(self, state) -> None:
+        candidates = self._collect_candidates()
+        for f in candidates:
+            verdict = await self._ask_o3(f)
+            if verdict == "false":
+                self._quarantine(f)
+                await self.dF(-1)
+                await self.dE(-1)
+                await self.send_amp(
+                    "false_piece_removed",
+                    {"file_path": str(f.relative_to(SANDBOX_ROOT))},
+                    broadcast=True,
                 )
-                await self.publish("false_piece.detected", message)
-        except Exception as e:
-            logger.error(f"FalsePieceAgent LLM call failed for {file_path}: {e}")
+                await self.dH(-0.1)
+                await self.dB(+1)
+
+    def _collect_candidates(self) -> Set[Path]:
+        unused_files = self._unused_files()
+        large_or_tiny = {p for p in SANDBOX_ROOT.rglob("*") if p.is_file() and self._size_outlier(p)}
+        duplicates = self._duplicate_files()
+        return unused_files | large_or_tiny | duplicates
+
+    def _unused_files(self) -> Set[Path]:
+        files = set()
+        for file in SANDBOX_ROOT.rglob("*"):
+            if not file.is_file():
+                continue
+            rel = str(file.relative_to(SANDBOX_ROOT))
+            try:
+                grep = subprocess.run(
+                    ["grep", "-R", "-n", rel, "."],
+                    cwd=SANDBOX_ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if grep.stdout.strip() == "":
+                    files.add(file)
+            except Exception:
+                continue
+        return files
+
+    def _size_outlier(self, p: Path) -> bool:
+        sz = p.stat().st_size
+        return sz < 10 or sz > 1_048_576
+
+    def _duplicate_files(self) -> Set[Path]:
+        dupes = set()
+        for p in SANDBOX_ROOT.rglob("*"):
+            if not p.is_file():
+                continue
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            if h in self.hash_index:
+                dupes.add(p)
+            else:
+                self.hash_index[h] = p
+        return dupes
+
+    async def _ask_o3(self, f: Path) -> str:
+        snippet = f.read_text(encoding="utf-8", errors="ignore").splitlines()[:3]
+        prompt = (
+            "Repo description: software project under repair.\n"
+            f"File path: {f.relative_to(SANDBOX_ROOT)}\n"
+            f"First lines:\n{chr(10).join(snippet)}\n\n"
+            "Is this file relevant? Reply JSON {\"verdict\": \"false\"|\"true\"}."
+        )
+        try:
+            resp = await self.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=16,
+                temperature=0.0,
+            )
+            data = json.loads(resp)
+            return data.get("verdict", "true")
+        except Exception as exc:
+            logger.debug("o3 false-piece check failed: %s", exc)
+            return "true"
+
+    def _quarantine(self, f: Path) -> None:
+        target = QUAR_DIR / f.relative_to(SANDBOX_ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(f), target)
+        logger.info("Quarantined false piece %s", f)

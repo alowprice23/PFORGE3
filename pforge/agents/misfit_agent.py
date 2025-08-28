@@ -2,99 +2,88 @@ from __future__ import annotations
 import logging
 import os
 import re
-import orjson
-from typing import TYPE_CHECKING
+import json
+from typing import List, Tuple
+import asyncio
 from pathlib import Path
 
 from .base_agent import BaseAgent
-from pforge.orchestrator.signals import MsgType, Message
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
+import textwrap
 
-if TYPE_CHECKING:
-    from pforge.messaging.in_memory_bus import InMemoryBus
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("agent.misfit")
+SANDBOX_ROOT = Path(os.getenv("SANDBOX_ROOT", "sandbox_test"))
 
 class MisfitAgent(BaseAgent):
-    """
-    Detects code that is semantically misplaced (e.g., a utility function
-    in a data model file).
-    """
     name = "misfit"
-    tick_interval: float = 2.0
+    weight = 1.1
+    spawn_threshold = 0.12
+    retire_threshold = -0.03
+    max_tokens_tick = 5_000
+    tick_interval = 6.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
-        super().__init__(bus, config, project)
-        self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
-
-        budget_meter = BudgetMeter(
-            tenant="pforge-dev",
-            daily_quota_tokens=1_000_000,
-            redis_client=self.bus.redis_client
-        )
+    async def on_startup(self) -> None:
         self.llm_client = OpenAIClient(
             api_key=os.getenv("OPENAI_API_KEY"),
-            budget_meter=budget_meter
+            budget_meter=BudgetMeter(tenant="pforge-dev", daily_quota=1_000_000)
         )
+        self._no_misfit_ticks: int = 0
+        logger.info("MisfitAgent ready with OpenAI o3")
 
-    def _extract_symbols(self, file_content: str) -> list[str]:
-        """A simple regex-based parser to find function and class names."""
-        # This is a naive implementation; a real one would use an AST parser.
-        return re.findall(r"^(?:def|class)\s+([a-zA-Z0-9_]+)", file_content, re.MULTILINE)
-
-    async def on_tick(self):
-        message = await self.bus.get(self.name, timeout=0.1)
-        if not message or message.type != MsgType.FIX_PATCH_APPLIED:
+    async def on_tick(self, state) -> None:
+        symbols = self._recent_symbols()
+        if not symbols:
+            self._no_misfit_ticks += 1
+            if self._no_misfit_ticks >= 3 and state.misfits > 0:
+                await self.dM(-1)
+                self._no_misfit_ticks = 0
             return
 
-        file_path_str = message.payload.get("file_path")
-        if not file_path_str:
-            return
+        for file_path, symbol in symbols:
+            verdict, suggestion = await self._ask_o3(file_path, symbol)
+            if verdict == "misfit":
+                await self._report_misfit(file_path, symbol, suggestion)
+                await self.dM(+1)
+                self._no_misfit_ticks = 0
 
-        logger.info(f"MisfitAgent checking for misfits in {file_path_str}")
+    def _recent_symbols(self) -> List[Tuple[str, str]]:
+        # This is a placeholder for a real implementation that would get
+        # the recently changed symbols from the orchestrator or another agent.
+        return []
 
-        try:
-            full_path = self.project.root / file_path_str
-            if not full_path.exists():
-                logger.warning(f"MisfitAgent could not find file to check: {full_path}")
-                return
-            content = full_path.read_text()
-            symbols = self._extract_symbols(content)
-        except Exception as e:
-            logger.error(f"MisfitAgent could not read or parse {file_path_str}: {e}")
-            return
+    async def _ask_o3(self, file_path: str, symbol: str) -> Tuple[str, str]:
+        prompt = textwrap.dedent(
+            f"""
+            You are a code reviewer. The symbol `{symbol}` was added to file
+            `{file_path}`. Based on typical project organisation
+            (helpers in utils/, business logic in services/, data in models/),
+            decide if this symbol is misplaced.
 
-        for symbol in symbols:
-            await self._check_symbol_placement(file_path_str, symbol)
-
-    async def _check_symbol_placement(self, file_path: str, symbol: str):
-        prompt = (
-            f"You are a code architecture reviewer. The function or class '{symbol}' "
-            f"is located in the file '{file_path}'.\n\n"
-            "Based on standard software engineering principles (e.g., separation of concerns, "
-            "high cohesion), does this symbol semantically belong in this file?\n\n"
-            "Respond with a single JSON object with two keys:\n"
-            '1. "misfit": boolean (true if it is a misfit, false otherwise)\n'
-            '2. "suggestion": string (if a misfit, suggest a better file path, e.g., "pforge/utils/helpers.py"; otherwise null)'
+            Respond strictly as JSON:
+            {{ "verdict": "fit"|"misfit", "suggested_path": "<path>|null" }}
+            """
         )
-
         try:
-            response_text = await self.llm_client.chat([{"role": "user", "content": prompt}])
-            verdict = orjson.loads(response_text)
-            if verdict.get("misfit") is True:
-                suggestion = verdict.get("suggestion")
-                logger.warning(f"Misfit detected: '{symbol}' in '{file_path}'. Suggested path: {suggestion}")
+            resp = await self.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=64,
+                temperature=0.0,
+            )
+            data = json.loads(resp)
+            return data.get("verdict", "fit"), data.get("suggested_path") or file_path
+        except Exception as exc:
+            logger.debug("o3 misfit check failed: %s", exc)
+            return "fit", file_path
 
-                misfit_message = Message(
-                    type="misfit.detected", # New MsgType
-                    payload={
-                        "file_path": file_path,
-                        "symbol": symbol,
-                        "suggestion": suggestion,
-                    }
-                )
-                await self.publish("misfit.detected", misfit_message)
-
-        except Exception as e:
-            logger.error(f"MisfitAgent LLM call or parsing failed for symbol '{symbol}': {e}")
+    async def _report_misfit(self, file_path: str, symbol: str, suggestion: str) -> None:
+        await self.send_amp(
+            action="misfit_report",
+            payload={
+                "file_path": file_path,
+                "symbol": symbol,
+                "suggested_path": suggestion,
+            },
+            broadcast=True,
+        )
+        logger.info("Misfit detected: %s.%s -> suggest %s", file_path, symbol, suggestion)

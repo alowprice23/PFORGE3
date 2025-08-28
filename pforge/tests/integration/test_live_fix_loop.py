@@ -51,7 +51,7 @@ async def test_live_e2e_full_loop(e2e_project):
     """
     project_dir = e2e_project
     project = Project(project_dir)
-    config = Config.load(path=project_dir / "pforge.toml")
+    config = load_config()
 
     # --- Initial state verification ---
     # Use the robust run_tests function we've already fixed
