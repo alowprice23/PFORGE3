@@ -25,10 +25,17 @@ class StateBus:
 
     def snapshot(self) -> PuzzleState:
         """Return a mutable copy of the last state."""
+        # Ensure that _snap_cache is always a PuzzleState instance before calling asdict
+        if not isinstance(self._snap_cache, PuzzleState):
+             # This can happen if publish was called with a dict.
+             # We can try to recover or, for robustness, reset to a default state.
+             self._snap_cache = PuzzleState()
         return PuzzleState(**asdict(self._snap_cache))
 
-    def publish(self, state: PuzzleState) -> None:
+    async def publish(self, state: PuzzleState) -> None:
         """Updates the in-memory state."""
+        if not isinstance(state, PuzzleState):
+            raise TypeError(f"StateBus.publish() expected a PuzzleState object, but got {type(state)}")
         self._snap_cache = state
 
     def get_latest_state(self) -> PuzzleState:

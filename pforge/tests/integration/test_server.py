@@ -35,10 +35,13 @@ def test_metrics_endpoint(test_client: TestClient):
     Tests that the /api/metrics endpoint is available and returns a
     Prometheus-formatted response.
     """
+    from pforge.metrics.metrics_collector import PFORGE_EFFICIENCY
+    PFORGE_EFFICIENCY.set(0.75)
     response = test_client.get("/api/metrics")
 
     assert response.status_code == 200
     # Check for the correct content type for Prometheus
     assert "text/plain" in response.headers["content-type"]
-    # Check that it contains at least one of our custom metrics
+    # Check that it contains our custom metric and its value
     assert "pforge_efficiency" in response.text
+    assert "0.75" in response.text

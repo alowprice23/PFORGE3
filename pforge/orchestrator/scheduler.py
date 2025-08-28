@@ -22,19 +22,14 @@ class AdaptiveScheduler:
     def _compute_decisions(self, state: PuzzleState) -> Dict[str, str]:
         """Return mapping agent_name -> action ('spawn'|'retain'|'retire')"""
         decisions: Dict[str, str] = {}
-        agent_configs = self.cfg.get("agents", [])
+        agent_configs = self.cfg.agents.get("agents", {})
 
-        for agent_config in agent_configs:
-            name = agent_config.get("name")
-            if not name:
-                continue
-
+        for name, agent_config in agent_configs.items():
             meta = self.registry.meta.get(name, {})
             spawn_threshold = agent_config.get("spawn_threshold", meta.get("spawn_threshold", 0.0))
             retire_threshold = agent_config.get("retire_threshold", meta.get("retire_threshold", 0.0))
 
             # This is a placeholder for a real utility calculation.
-            # In a real system, this would be a more complex function of the puzzle state.
             utility = state.delta_utility.get(name, 0.0)
 
             if name not in self.active_tasks and utility >= spawn_threshold:

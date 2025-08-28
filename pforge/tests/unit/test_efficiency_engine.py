@@ -44,19 +44,18 @@ def test_efficiency_with_all_penalties():
         gaps=2,
         misfits=1,
         false_pieces=1,
-        decay=0.5,
         risk=10,
         backtracks=3,
-        entropy=5,
-        total_issues=4
+        entropy=5
     )
+    engine.total_pieces = 4
 
     # P = 4
     # Denominator = 20 (tick) + 2 (gaps) + 1.5*1 (misfits) + 2.0*1 (false_pieces)
-    #             + 0.5 (decay) + 1.2*10 (risk) + 1.0*3 (backtracks) + 0.8*5 (entropy)
-    # Denominator = 20 + 2 + 1.5 + 2.0 + 0.5 + 12 + 3 + 4 = 45
-    # Score = 4 / 45
-    denominator = (20 + 2 + (1.5*1) + (2.0*1) + 0.5 + (1.2*10) + (1.0*3) + (0.8*5))
+    #             + 1.2*10 (risk) + 1.0*3 (backtracks) + 0.8*5 (entropy)
+    # Denominator = 20 + 2 + 1.5 + 2.0 + 12 + 3 + 4 = 44.5
+    # Score = 4 / 44.5
+    denominator = (20 + 2 + (1.5*1) + (2.0*1) + (1.2*10) + (1.0*3) + (0.8*5))
     expected_score = 4 / denominator
     assert engine.compute(state) == pytest.approx(expected_score)
 
@@ -109,7 +108,8 @@ def test_denominator_clamped_at_one():
     Tests that a large phi reward doesn't lead to an inflated score.
     """
     engine = EfficiencyEngine(TEST_CONSTANTS)
-    state = PuzzleState(tick=5, phi=10, total_issues=5) # P=5
-    # Denominator = 5 - 2.5*10 = -20. max(denominator, 1.0) will be 1.0
+    state = PuzzleState(tick=5, phi=10, gaps=5) # P=5
+    engine.total_pieces = 5
+    # Denominator = 5 (tick) + 5 (gaps) - 2.5*10 (phi) = -15. max(denominator, 1.0) will be 1.0
     # Score should be 5 / 1 = 5
     assert engine.compute(state) == pytest.approx(5.0)

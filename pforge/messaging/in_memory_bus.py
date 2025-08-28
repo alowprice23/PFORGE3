@@ -56,19 +56,23 @@ class InMemoryBus:
             for queue in self.topics[topic]:
                 await queue.put(message)
 
-    async def get(self, subscriber_name: str, timeout: float | None = None) -> Any | None:
+    async def get(self, subscriber_name: str, timeout: float | None = None) -> List[Any]:
         """
-        Waits for and retrieves a message from a subscriber's personal queue.
-        Returns None if the timeout is reached.
+        Retrieves all available messages from a subscriber's personal queue.
+        This is a non-blocking drain of the queue.
         """
         queue = self._get_or_create_subscriber_queue(subscriber_name)
-        try:
-            if timeout:
-                return await asyncio.wait_for(queue.get(), timeout=timeout)
-            else:
-                return await queue.get()
-        except asyncio.TimeoutError:
-            return None
+        messages = []
+        if queue.empty():
+            return messages
+
+        while not queue.empty():
+            try:
+                messages.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                # This can happen in a race condition, it's safe to just stop.
+                break
+        return messages
 
     async def start(self):
         """

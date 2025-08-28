@@ -4,6 +4,8 @@ from typing import Literal, Dict, Any, Optional
 from enum import Enum
 
 class MsgType(str, Enum):
+    TESTS_FAILED = "TESTS.FAILED"
+    FILE_MANIFEST = "FILE.MANIFEST"
     OBS_TICK = "OBS.TICK"
     PLAN_PROPOSED = "PLAN.PROPOSED"
     FIX_PATCH_PROPOSED = "FIX.PATCH_PROPOSED"

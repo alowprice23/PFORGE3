@@ -1,122 +1,55 @@
 from __future__ import annotations
-import asyncio
-import json
 import logging
-import os
-import subprocess
-from pathlib import Path
-from typing import Dict, Set
-
-import libcst as cst
 
 from pforge.orchestrator.state_bus import PuzzleState
+from pforge.orchestrator.signals import Message, MsgType
+from pforge.validation.test_runner import run_tests
 from .base_agent import BaseAgent
-
-SANDBOX_ROOT = Path(os.getenv("SANDBOX_ROOT", "sandbox_test"))
 
 logger = logging.getLogger("agent.observer")
 
 class ObserverAgent(BaseAgent):
     name = "observer"
-    weight = 1.0
-    spawn_threshold = 0.20
-    retire_threshold = -0.10
-    max_tokens_tick = 6_000
-    tick_interval = 5.0
-
-    _parsed_files: Set[Path] = set()
-    _last_git_hash: str | None = None
+    tick_interval = 5.0  # Run tests every 5 seconds
 
     async def on_startup(self) -> None:
-        logger.info("ObserverAgent starting initial crawl")
-        if not SANDBOX_ROOT.exists():
-            SANDBOX_ROOT.mkdir(exist_ok=True)
-        await self._full_crawl()
+        self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
 
     async def on_tick(self, state: PuzzleState) -> None:
-        changed = self._sandbox_diff()
-        if changed:
-            await self._incremental_crawl(changed)
-
-        entropy_score = self._calc_entropy()
-        await self.dH(entropy_score - state.entropy)
-
-        if state.tick % 3 == 0:
-            await self.send_amp(
-                action="file_manifest",
-                payload={"files": [str(p.relative_to(SANDBOX_ROOT)) for p in self._parsed_files]},
-                broadcast=True,
-            )
-
-    async def _full_crawl(self) -> None:
-        files = list(SANDBOX_ROOT.rglob("*.*"))
-        await self._parse_files(files)
-        self._update_git_hash()
-        logger.info("ObserverAgent full crawl complete: %d files", len(files))
-
-    async def _incremental_crawl(self, changed: Set[Path]) -> None:
-        if not changed:
+        # Also listen for messages that a patch has been applied
+        messages = await self.read_amp()
+        if messages:
+            # If we got any message, it means a patch was applied, so we should run tests.
+            logger.info("ObserverAgent detected a patch, running tests.")
+            await self._run_and_report_tests()
             return
-        await self._parse_files(changed)
-        self._update_git_hash()
-        logger.debug("ObserverAgent incremental crawl: %d files", len(changed))
 
-    async def _parse_files(self, files) -> None:
-        loop = asyncio.get_event_loop()
-        tasks = [loop.run_in_executor(None, self._parse_single, f) for f in files]
-        await asyncio.gather(*tasks)
-        self._parsed_files.update(files)
+        # If no patches, only run tests periodically to avoid spamming
+        if state.tick % 3 == 0:
+            logger.info("ObserverAgent running periodic tests.")
+            await self._run_and_report_tests()
 
-    def _parse_single(self, file_path: Path) -> None:
+    async def _run_and_report_tests(self) -> None:
+        """Runs the test suite and publishes the result."""
         try:
-            if file_path.suffix in {".py"}:
-                with file_path.open("r", encoding="utf-8") as f:
-                    src = f.read()
-                module = cst.parse_module(src)
-                todo_count = src.count("TODO") + src.count("FIXME")
-                if todo_count:
-                    asyncio.run(self.dE(todo_count))
-        except Exception as exc:
-            logger.warning("Parse failed for %s: %s", file_path, exc)
+            result = run_tests(test_nodes=[], source_root=self.project.root)
+            if result is None:
+                logger.error("Test runner returned None.")
+                return
 
-    def _sandbox_diff(self) -> Set[Path]:
-        if not (SANDBOX_ROOT / ".git").exists():
-            return set()
-
-        new_hash = subprocess.check_output(
-            ["git", "-C", str(SANDBOX_ROOT), "rev-parse", "HEAD"], text=True
-        ).strip()
-        if self._last_git_hash == new_hash:
-            return set()
-
-        if self._last_git_hash is None:
-            self._last_git_hash = new_hash
-            return set()
-
-        output = subprocess.check_output(
-            ["git", "-C", str(SANDBOX_ROOT), "diff", "--name-only", self._last_git_hash, "HEAD"],
-            text=True,
-        )
-        changed = {SANDBOX_ROOT / line.strip() for line in output.splitlines() if line.strip()}
-        return changed
-
-    def _update_git_hash(self) -> None:
-        if (SANDBOX_ROOT / ".git").exists():
-            self._last_git_hash = subprocess.check_output(
-                ["git", "-C", str(SANDBOX_ROOT), "rev-parse", "HEAD"], text=True
-            ).strip()
-
-    def _calc_entropy(self) -> float:
-        todos = sum(
-            1
-            for p in self._parsed_files
-            if p.exists() and "TODO" in p.read_text(encoding="utf-8", errors="ignore")
-        )
-        if not self._parsed_files:
-            return 0.0
-        import math
-
-        prob = todos / len(self._parsed_files) if self._parsed_files else 0
-        if prob == 0 or prob == 1:
-            return 0.0
-        return -prob * math.log2(prob) - (1 - prob) * math.log2(1 - prob) if prob > 0 and prob < 1 else 0.0
+            if result.failed > 0 or result.exit_code != 0:
+                logger.warning("Tests failed! Publishing TESTS_FAILED.")
+                message = Message(
+                    type=MsgType.TESTS_FAILED,
+                    payload={
+                        "report_content": result.report_content,
+                        "exit_code": result.exit_code,
+                    }
+                )
+                await self.bus.publish(MsgType.TESTS_FAILED.value, message)
+            else:
+                logger.info("Tests passed! Publishing QED_EMITTED.")
+                message = Message(type=MsgType.QED_EMITTED, payload={})
+                await self.bus.publish(MsgType.QED_EMITTED.value, message)
+        except Exception as e:
+            logger.exception("ObserverAgent failed to run tests: %s", e)

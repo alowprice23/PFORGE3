@@ -6,7 +6,7 @@ from unittest.mock import patch, AsyncMock
 import orjson
 import subprocess
 
-from pforge.config import Config
+from pforge.config.models import Config
 from pforge.project import Project
 from pforge.orchestrator.core import Orchestrator
 from pforge.orchestrator.signals import MsgType, Message
@@ -18,14 +18,30 @@ def e2e_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
 
-        (project_dir / "pforge.toml").write_text("[doctor]\nretry_limit = 1\n")
+        # Create a valid, isolated config for the test
+        config_dir = project_dir / "pforge" / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "settings.yaml").write_text("doctor:\n  retry_limit: 1\n")
+        (config_dir / "llm_providers.yaml").write_text("providers: []\n")
+        (config_dir / "quotas.yaml").write_text("quotas: []\n")
+        (config_dir / "agents.yaml").write_text(
+            "agents:\n"
+            "  observer:\n"
+            "    enabled: true\n"
+            "  planner:\n"
+            "    enabled: true\n"
+            "  fixer:\n"
+            "    enabled: true\n"
+        )
 
         source_dir = project_dir / "pforge"
-        source_dir.mkdir()
+        source_dir.mkdir(exist_ok=True)
+        (source_dir / "__init__.py").touch()
         (source_dir / "buggy.py").write_text("def my_buggy_function():\n    return 1\n")
 
         tests_dir = project_dir / "pforge" / "tests"
         tests_dir.mkdir()
+        (tests_dir / "__init__.py").touch()
         (tests_dir / "test_buggy.py").write_text(
             "from pforge.buggy import my_buggy_function\n\n"
             "def test_bug():\n"
@@ -51,7 +67,7 @@ async def test_live_e2e_full_loop(e2e_project):
     """
     project_dir = e2e_project
     project = Project(project_dir)
-    config = load_config()
+    config = Config.load(project_dir / "pforge" / "config")
 
     # --- Initial state verification ---
     # Use the robust run_tests function we've already fixed
@@ -61,15 +77,15 @@ async def test_live_e2e_full_loop(e2e_project):
 
     # --- Setup Orchestrator and listener ---
     orchestrator = Orchestrator(config, project)
-    orchestrator.setup_agents()
 
-    # We will listen for the final TESTS_PASSED signal
+    # We will listen for the final QED_EMITTED signal
     bus = orchestrator.bus
     test_subscriber = "e2e_test_listener"
-    bus.subscribe(test_subscriber, MsgType.TESTS_PASSED.value)
+    bus.subscribe(test_subscriber, MsgType.QED_EMITTED.value)
 
     # --- Run the Orchestrator ---
-    orchestrator_task = asyncio.create_task(orchestrator.run())
+    orchestrator_task = asyncio.create_task(orchestrator.run_forever())
+    await asyncio.sleep(0.1) # Allow time for agents to start and subscribe
 
     # Manually kick off the process by sending the first TESTS_FAILED message
     # This is faster and more reliable for a test than waiting for the Observer's tick
@@ -85,19 +101,19 @@ async def test_live_e2e_full_loop(e2e_project):
     initial_failed_message = Message(
         type=MsgType.TESTS_FAILED,
         payload={
-            "failed_tests": failed_tests_processed,
-            "failed": initial_result.failed,
-            "passed": initial_result.passed,
+                "report_content": initial_result.report_content,
+                "exit_code": initial_result.exit_code,
         }
     )
-    await bus.publish(MsgType.TESTS_FAILED.value, initial_failed_message)
+    await bus.publish("amp:global:events", initial_failed_message)
 
     # --- Wait for the outcome ---
     try:
-        # Wait for the TESTS_PASSED message that signals a successful fix
-        final_message = await bus.get(test_subscriber, timeout=20.0)
-        assert final_message is not None
-        assert final_message.type == MsgType.TESTS_PASSED
+        # Wait for the QED_EMITTED message that signals a successful fix
+        final_messages = await bus.get(test_subscriber, timeout=20.0)
+        assert final_messages, "Did not receive any message on the bus"
+        final_message = final_messages[0]
+        assert final_message.type == MsgType.QED_EMITTED
     except asyncio.TimeoutError:
         pytest.fail("Test timed out waiting for a fix to be applied and verified.")
     finally:

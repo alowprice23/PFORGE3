@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import yaml
 
+from pforge.messaging.in_memory_bus import InMemoryBus
 from .state_bus import StateBus, PuzzleState
 from .scheduler import AdaptiveScheduler
 from .efficiency_engine import EfficiencyEngine
@@ -21,15 +22,19 @@ class OrchestratorConfig(dict):
             raw = yaml.safe_load(f)
         return cls(raw)
 
+from pforge.config.models import Config
+
 class Orchestrator:
     """Main driver for the pForge agentic system."""
 
-    def __init__(self, cfg: OrchestratorConfig) -> None:
+    def __init__(self, cfg: Config, project) -> None:
         self.cfg = cfg
+        self.project = project
+        self.bus = InMemoryBus()
         self.state_bus = StateBus()
-        self.eff_engine = EfficiencyEngine(cfg.get("formula_constants", {}))
-        self.registry = AgentRegistry(self.cfg, self.state_bus, self.eff_engine)
-        self.scheduler = AdaptiveScheduler(self.registry, self.state_bus, cfg)
+        self.eff_engine = EfficiencyEngine(cfg.settings.get("formula_constants", {}))
+        self.registry = AgentRegistry(self.cfg, self.bus, self.state_bus, self.eff_engine, self.project)
+        self.scheduler = AdaptiveScheduler(self.registry, self.bus, cfg)
 
     async def tick(self) -> None:
         """Advance global state then delegate to scheduler."""
@@ -40,7 +45,7 @@ class Orchestrator:
         puzzle_state.timestamp = now.isoformat()
 
         puzzle_state.efficiency = self.eff_engine.compute(puzzle_state)
-        self.state_bus.publish(puzzle_state)
+        await self.state_bus.publish(puzzle_state)
 
         await self.scheduler.tick(puzzle_state)
 

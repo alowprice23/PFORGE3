@@ -7,6 +7,8 @@ import time
 
 from pforge.orchestrator.state_bus import StateBus, PuzzleState
 from pforge.orchestrator.signals import (
+    Message,
+    MsgType,
     BaseDelta,
     GapDelta,
     MisfitDelta,
@@ -31,13 +33,14 @@ class BaseAgent:
     max_tokens_tick: int = 2_000
     tick_interval: float = 2.0
 
-    def __init__(self, state_bus: StateBus, eff_engine) -> None:
+    def __init__(self, bus, state_bus: StateBus, eff_engine, project) -> None:
+        self.bus = bus
         self.state_bus = state_bus
         self.eff_engine = eff_engine
+        self.project = project
         self.phase: Phase = Phase.BORN
         self.logger = logging.getLogger(f"agent.{self.name}")
         self._running = True
-        self.message_box = []
 
     async def run_loop(self) -> None:
         self.phase = Phase.WARM
@@ -81,18 +84,25 @@ class BaseAgent:
         metrics: Optional[Dict[str, float]] = None,
         broadcast: bool = False,
     ) -> None:
-        # Simplified in-memory message passing
-        # In a real local-only system, this could write to a shared queue
-        # or be handled by a central dispatcher.
-        # For now, we'll just log it.
-        self.logger.debug(f"Sending AMP message: {action} with payload: {payload}")
+        # This is a bridge between old string-based actions and new Enum-based types.
+        # A full refactor would remove the `action` string argument entirely.
+        action_to_type_map = {
+            "fix_task": MsgType.FIX_PATCH_PROPOSED,
+            "predictions": MsgType.PLAN_PROPOSED,
+            "file_manifest": MsgType.FILE_MANIFEST,
+        }
+        msg_type = action_to_type_map.get(action)
+        if not msg_type:
+            self.logger.error("send_amp called with unknown action: %s", action)
+            return
 
+        topic = "amp:global:events" if broadcast else f"amp:{self.name}:out"
+        # The bus now expects structured Message objects
+        message = Message(type=msg_type, payload={**payload, "metrics": metrics or {}})
+        await self.bus.publish(topic, message)
 
-    async def read_amp(self) -> list[dict[str, Any]]:
-        # Simplified in-memory message passing
-        messages = self.message_box
-        self.message_box = []
-        return messages
+    async def read_amp(self) -> list[Message]:
+        return await self.bus.get(self.name)
 
     async def publish_delta(self, delta: BaseDelta) -> None:
         state = self.state_bus.get_latest_state()
@@ -108,7 +118,7 @@ class BaseAgent:
             state.backtracks += delta.value
         elif delta.kind == "entropy":
             state.entropy += delta.value
-        self.state_bus.publish(state)
+        await self.state_bus.publish(state)
 
 
     async def dE(self, value: int) -> None:
