@@ -1,118 +1,136 @@
 from __future__ import annotations
-import json
 import logging
-import time
-from collections import deque
-from typing import Deque, Dict, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from pforge.orchestrator.state_bus import PuzzleState
-from pforge.orchestrator.signals import MsgType
 from .base_agent import BaseAgent
+from pforge.orchestrator.signals import MsgType, Message
+from pforge.math_models.priority import compute_task_priority
 
-logger = logging.getLogger("agent.planner")
+if TYPE_CHECKING:
+    from pforge.config import Config
+    from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.project import Project
+
+
+logger = logging.getLogger(__name__)
+
 
 class PlannerAgent(BaseAgent):
     name = "planner"
-    weight = 1.2
-    spawn_threshold = 0.10
-    retire_threshold = -0.05
-    max_tokens_tick = 3_000
-    tick_interval = 2.0
+    tick_interval: float = 1.0  # Check for messages every second
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.backlog: Deque[Dict] = deque()
-        self._ticks_since_prediction: int = 0
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
+        self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
+        self.bus.subscribe(self.name, MsgType.FIX_FAILED.value)
 
-    async def on_startup(self) -> None:
-        self.bus.subscribe(self.name, "amp:global:events")
-
-    async def on_tick(self, state: PuzzleState) -> None:
-        await self._process_incoming_messages()
-
-        if self.backlog:
-            suggestion = self.backlog.popleft()
-            await self._dispatch_to_fixer(suggestion)
-            self._ticks_since_prediction = 0
-        else:
-            self._ticks_since_prediction += 1
-
-        if self._ticks_since_prediction > 5 and state.gaps > 0:
-            await self.dR(+1)
-            self._ticks_since_prediction = 0
-
-    async def _process_incoming_messages(self) -> None:
-        messages = await self.read_amp()
-        if messages:
-            for msg in messages:
-                if msg.type == MsgType.PLAN_PROPOSED:
-                    for sug in msg.payload.get("suggestions", []):
-                        self._queue_suggestion(sug)
-                elif msg.type == MsgType.FIX_PATCH_APPLIED:
-                    fp = msg.payload.get("file_path")
-                    self.backlog = deque([s for s in self.backlog if s.get("file_path") != fp])
-                    await self.dR(-0.5)
-                elif msg.type == MsgType.TESTS_FAILED:
-                    await self._create_tasks_from_report(msg.payload)
-
-    def _infer_source_from_test(self, test_path: str) -> Optional[str]:
+    def _infer_source_from_test(self, test_path_str: str) -> str:
         """
-        Infers the source code file path from a test file path.
-        Example: `pforge/tests/test_module.py` -> `pforge/module.py`
+        Infers the source file path from a test file path.
+        e.g., 'pforge/tests/integration/test_fixer_agent.py' -> 'pforge/agents/fixer_agent.py'
         """
-        if "tests" not in test_path:
-            return None
+        test_path = Path(test_path_str)
 
-        parts = test_path.split("/")
-        if "tests" in parts:
-            tests_index = parts.index("tests")
-            # a/b/tests/test_c.py -> a/b/c.py
-            if parts[-1].startswith("test_"):
-                source_filename = parts[-1].replace("test_", "")
-                source_path_parts = parts[:tests_index] + [source_filename]
-                return "/".join(source_path_parts)
-        return None
+        # Remove 'tests/' prefix and 'test_' from filename
+        parts = list(test_path.parts)
 
-    async def _create_tasks_from_report(self, payload: Dict) -> None:
-        report_content = payload.get("report_content", "{}")
+        # Find the 'tests' directory and rebuild the path from the part after it
         try:
-            report = json.loads(report_content)
-            failed_tests = [t for t in report.get("tests", []) if t.get("outcome") == "failed"]
+            tests_index = parts.index("tests")
+            # This assumes the structure inside tests mirrors the structure in pforge
+            source_parts = parts[tests_index + 1 :]
+        except ValueError:
+            # If 'tests' is not in the path, assume it's a top-level test
+            source_parts = parts
 
-            for test in failed_tests:
-                test_node_id = test.get("nodeid", "") # e.g., "pforge/tests/test_buggy.py::test_bug"
-                test_filepath = test_node_id.split("::")[0]
+        if not source_parts:
+            return ""
 
-                source_filepath = self._infer_source_from_test(test_filepath)
-                if source_filepath:
-                    suggestion = {
-                        "file_path": source_filepath,
-                        "stub": f"Fix the bug revealed by test: {test_node_id}",
-                        "confidence": 0.75, # Higher confidence for direct test failures
-                    }
-                    self._queue_suggestion(suggestion)
-                    await self.dR(+0.2) # Increment desire for a fix
-                else:
-                    logger.warning("Could not infer source for failed test: %s", test_filepath)
+        filename = source_parts[-1]
+        if filename.startswith("test_"):
+            source_parts[-1] = filename.replace("test_", "", 1)
 
-        except json.JSONDecodeError:
-            logger.error("Failed to decode test report JSON.")
+        # Reconstruct path relative to the pforge package root
+        return str(Path("pforge") / Path(*source_parts))
 
-    def _queue_suggestion(self, sug: Dict) -> None:
-        entry = {
-            "file_path": sug.get("file_path"),
-            "stub": sug.get("stub"),
-            "confidence": float(sug.get("confidence", 0.5)),
-            "ts": time.time(),
-        }
-        self.backlog.append(entry)
-        self.backlog = deque(sorted(self.backlog, key=lambda x: -x["confidence"]))
+    async def on_tick(self):
+        """
+        Listens for TESTS_FAILED and FIX_FAILED events and dispatches FIX_TASKs.
+        """
+        message = await self.bus.get(self.name)
+        if not message:
+            return
 
-    async def _dispatch_to_fixer(self, item: Dict) -> None:
-        await self.send_amp(
-            action="fix_task",
-            payload=item,
-            metrics={"confidence": item["confidence"]},
+        if message.type == MsgType.TESTS_FAILED:
+            await self._handle_tests_failed(message.payload)
+        elif message.type == MsgType.FIX_FAILED:
+            await self._handle_fix_failed(message.payload)
+
+    async def _handle_tests_failed(self, payload: dict):
+        logger.info("PlannerAgent consumed TESTS_FAILED event.")
+
+        failed_tests = payload.get("failed_tests", [])
+        if not failed_tests:
+            return
+
+        # For now, focus on the first failure
+        first_failure = failed_tests[0]
+        nodeid = first_failure.get("nodeid", "")
+        if not nodeid:
+            return
+
+        test_file_path = nodeid.split("::")[0]
+        inferred_source_path = self._infer_source_from_test(test_file_path)
+
+        description = (
+            f"Fix the bug in '{inferred_source_path}' so that the test "
+            f"'{nodeid}' passes. The test failed with the "
+            f"following error:\n\n{first_failure['traceback']}"
         )
-        logger.debug("Planner dispatched fix_task for %s", item["file_path"])
 
+        # Use the new priority calculation
+        priority = compute_task_priority(payload)
+
+        fix_task_message = Message(
+            type=MsgType.FIX_TASK,
+            payload={
+                "file_path": inferred_source_path,
+                "description": description,
+                "priority": priority,
+                "failed_test_nodeid": nodeid,
+            },
+        )
+
+        await self.publish(MsgType.FIX_TASK.value, fix_task_message)
+        logger.info(f"Dispatched FIX_TASK for file: {inferred_source_path}")
+
+    async def _handle_fix_failed(self, payload: dict):
+        logger.info("PlannerAgent consumed FIX_FAILED event.")
+
+        file_path = payload.get("file_path")
+        original_description = payload.get("description")
+        traceback = payload.get("traceback")
+
+        description = (
+            f"A previous attempt to fix the bug in '{file_path}' failed. "
+            f"The original problem was:\n{original_description}\n\n"
+            f"The previous fix failed with this error:\n{traceback}\n\n"
+            "Please analyze the previous mistake and provide a different solution."
+        )
+
+        # For now, we'll reuse the priority from the failed task payload if it exists.
+        priority = payload.get("priority", 0.5)
+
+        fix_task_message = Message(
+            type=MsgType.FIX_TASK,
+            payload={
+                "file_path": file_path,
+                "description": description,
+                "priority": priority,
+                "failed_test_nodeid": payload.get("failed_test_nodeid"),
+            },
+        )
+
+        await self.publish(MsgType.FIX_TASK.value, fix_task_message)
+        logger.info(f"Dispatched new FIX_TASK for file: {file_path} (retry)")

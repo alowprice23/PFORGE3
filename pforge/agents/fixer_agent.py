@@ -1,139 +1,135 @@
 from __future__ import annotations
-import asyncio
-import json
 import logging
 import os
-import subprocess
-import textwrap
-from pathlib import Path
-from typing import Dict
+import re
+from typing import TYPE_CHECKING
 
-from pforge.orchestrator.state_bus import PuzzleState
 from .base_agent import BaseAgent
-from pforge.llm_clients.claude_client import ClaudeClient
+from pforge.orchestrator.signals import MsgType, Message
+from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
+from pforge.proof.bundle import ProofBundle, ProofObligation
+from pforge.validation.test_runner import run_tests
 
+if TYPE_CHECKING:
+    from pforge.config import Config
+    from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.project import Project
 
-logger = logging.getLogger("agent.fixer")
-SANDBOX_ROOT = Path(os.getenv("SANDBOX_ROOT", "sandbox_test"))
+logger = logging.getLogger(__name__)
 
 class FixerAgent(BaseAgent):
     name = "fixer"
-    weight = 1.4
-    spawn_threshold = 0.25
-    retire_threshold = 0.02
-    max_tokens_tick = 9_000
-    tick_interval = 2.0
+    tick_interval: float = 1.0
 
-    async def on_startup(self) -> None:
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
+        self.bus.subscribe(self.name, MsgType.FIX_TASK.value)
+
         # In a real system, the client would be injected or created by a factory
         # based on config. For now, we'll instantiate one directly.
         # The budget meter would also be shared.
         budget_meter = BudgetMeter(
             tenant="pforge-dev",
-            daily_quota=1_000_000,
+            daily_quota_tokens=1_000_000,
+            redis_client=self.bus.redis_client # Assuming bus exposes this
         )
-        self.llm_client = ClaudeClient(
-            api_key=os.getenv("CLAUDE_API_KEY"),
+        self.llm_client = OpenAIClient(
+            api_key=os.getenv("OPENAI_API_KEY"),
             budget_meter=budget_meter
         )
-        logger.info("FixerAgent ready with Claude 3.7")
 
-    async def on_tick(self, state: PuzzleState) -> None:
-        msg = await self._pop_fix_task()
-        if not msg:
+    async def on_tick(self):
+        message = await self.bus.get(self.name)
+        if not message:
             return
-        success = await self._apply_patch(msg)
-        if success:
-            await self.dE(-1)
-            await self.dM(-1)
+
+        if message.type == MsgType.FIX_TASK:
+            logger.info("FixerAgent received a FixTask command.")
+            await self._handle_fix_task(message.payload)
+
+    async def _handle_fix_task(self, payload: dict):
+        file_path = payload['file_path']
+        description = payload['description']
+        failed_test_nodeid = payload.get('failed_test_nodeid')
+
+        logger.info(f"[FixerLog] Attempting to fix file: {file_path}")
+        try:
+            original_content = self.project.read_file(file_path)
+        except FileNotFoundError:
+            logger.error(f"[FixerLog] File not found: {file_path}. Cannot apply fix.")
+            return
+
+        prompt = (
+            f"The file '{file_path}' has a bug.\n"
+            f"The bug is described as: {description}\n\n"
+            f"Here is the original content of the file:\n```\n{original_content}\n```\n\n"
+            f"Please provide the complete, corrected content of the file '{file_path}'. "
+            "Do not add any explanations or comments, only the raw file content, "
+            "enclosed in a single ```python ... ``` block."
+        )
+
+        logger.info("[FixerLog] Calling LLM...")
+        try:
+            corrected_content = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
+        except Exception as e:
+            logger.error(f"[FixerLog] LLM call failed: {e}")
+            return
+        logger.info("[FixerLog] LLM call complete.")
+        logger.info(f"[FixerLog] LLM response:\n---\n{corrected_content}\n---")
+
+        # Use regex to find the content within the first python markdown block
+        match = re.search(r"```python\n(.*?)\n```", corrected_content, re.DOTALL)
+        if match:
+            corrected_content = match.group(1).strip()
         else:
-            await self.dB(+1)
-            await self.dR(+1)
+            logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
 
-    async def _pop_fix_task(self) -> Dict | None:
-        msgs = await self.read_amp()
-        if msgs:
-            return msgs[0].get("payload")
-        return None
-
-    async def _ask_claude(self, file_path: str, stub: str) -> str | None:
-        prompt = textwrap.dedent(
-            f"""
-            You are FixerAgent. Insert or update the following stub in
-            `{file_path}` inside the sandbox repo.  Provide a unified diff.
-
-            Stub to integrate:
-            ```python
-            {stub}
-            ```
-            Only respond with the diff, no comments.
-            """
-        )
+        logger.info(f"[FixerLog] Applying potential fix to {file_path}")
         try:
-            resp = await self.llm_client.chat(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1024,
-                temperature=0.1,
-            )
-            return resp
-        except Exception as exc:
-            logger.warning("Claude call failed: %s", exc)
-            return None
+            self.project.write_file(file_path, corrected_content)
+        except IOError as e:
+            logger.error(f"[FixerLog] Failed to write fix to {file_path}: {e}")
+            return
+        logger.info(f"[FixerLog] Applied potential fix to {file_path}")
 
-    async def _apply_patch(self, task: Dict) -> bool:
-        file_path, stub = task["file_path"], task["stub"]
-        diff = await self._ask_claude(file_path, stub)
-        if diff is None:
-            return False
-
-        try:
-            proc = subprocess.run(
-                ["git", "-C", str(SANDBOX_ROOT), "apply", "-"],
-                input=diff.encode(),
-                capture_output=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            logger.warning("git apply failed: %s", exc.stderr.decode())
-            return False
-
-        pass_ok = await self._run_tests(short=True)
-        if pass_ok:
-            await self._commit_patch(file_path, diff)
-            await self.send_amp(
-                "patch_applied",
-                {"file_path": file_path, "diff": diff},
-                broadcast=True,
-            )
-            logger.info("Patch applied & tests green for %s", file_path)
-            return True
-
-        subprocess.run(["git", "-C", str(SANDBOX_ROOT), "reset", "--hard", "HEAD"], check=False)
-        await self.send_amp(
-            "patch_failed",
-            {"file_path": file_path, "reason": "tests_failed"},
-            broadcast=True,
+        logger.info(f"[FixerLog] Verifying fix by running test: {failed_test_nodeid}")
+        verification_result = run_tests(
+            test_nodes=[failed_test_nodeid] if failed_test_nodeid else [],
+            source_root=self.project.root
         )
-        logger.info("Patch reverted due to failing tests for %s", file_path)
-        return False
+        logger.info(f"[FixerLog] Verification complete. Result: {verification_result}")
 
-    async def _run_tests(self, short: bool = False) -> bool:
-        cmd = ["pytest", "-q"]
-        if short:
-            cmd += ["-m", "not slow"]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=SANDBOX_ROOT,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        await proc.communicate()
-        return proc.returncode == 0
+        fix_is_ok = verification_result is not None and verification_result.failed == 0
 
-    async def _commit_patch(self, file_path: str, diff: str) -> None:
-        subprocess.run(["git", "-C", str(SANDBOX_ROOT), "add", "."], check=False)
-        subprocess.run(
-            ["git", "-C", str(SANDBOX_ROOT), "commit", "-m", f"Fixer patch {file_path}"],
-            check=False,
+        proof = ProofBundle(
+            tree_sha="dummy_sha",
+            venv_lock_sha="dummy_venv_lock_sha",
+            constraints=[ProofObligation(id="phi.sem.llm_fix_verified", ok=fix_is_ok)]
         )
+
+        if fix_is_ok:
+            result_msg_type = MsgType.FIX_PATCH_APPLIED
+            result_payload = {"file_path": file_path}
+        else:
+            result_msg_type = MsgType.FIX_PATCH_REJECTED
+            # Extract traceback for the planner
+            traceback = "No verification result."
+            if verification_result and verification_result.report_content:
+                # For now, just pass the whole report content.
+                # A more sophisticated approach would parse this to find the specific error.
+                traceback = verification_result.report_content
+
+            result_payload = {
+                "file_path": file_path,
+                "description": description,
+                "failed_test_nodeid": failed_test_nodeid,
+                "traceback": traceback,
+            }
+
+        result_message = Message(type=result_msg_type, payload=result_payload)
+        result_message.payload["proof"] = proof.dict()
+
+        logger.info(f"[FixerLog] Publishing {result_msg_type.value} for {file_path}")
+        await self.publish(result_msg_type.value, result_message)
+        logger.info(f"[FixerLog] Published {result_msg_type.value} for {file_path}")

@@ -6,7 +6,7 @@ from unittest.mock import patch, AsyncMock
 import orjson
 import subprocess
 
-from pforge.config.models import Config
+from pforge.config import Config
 from pforge.project import Project
 from pforge.orchestrator.core import Orchestrator
 from pforge.orchestrator.signals import MsgType, Message
@@ -28,12 +28,17 @@ def e2e_project():
             "agents:\n"
             "  observer:\n"
             "    enabled: true\n"
+            "    spawn_threshold: 0.20\n"
+            "    retire_threshold: -0.10\n"
             "  planner:\n"
             "    enabled: true\n"
+            "    spawn_threshold: 0.10\n"
+            "    retire_threshold: -0.05\n"
             "  fixer:\n"
             "    enabled: true\n"
+            "    spawn_threshold: 0.25\n"
+            "    retire_threshold: 0.02\n"
         )
-
 
         source_dir = project_dir / "pforge"
         source_dir.mkdir(exist_ok=True)
@@ -68,7 +73,7 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     """
     project_dir = e2e_project
     project = Project(project_dir)
-    config = Config.load(project_dir / "pforge" / "config")
+    config = Config.load(config_dir=project_dir / "pforge" / "config")
 
     # --- Mock the LLM response ---
     correct_code = "def my_buggy_function():\n    return 2\n"
@@ -82,15 +87,15 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
 
     # --- Setup Orchestrator and listener ---
     orchestrator = Orchestrator(config, project)
+    orchestrator.setup_agents()
 
-    # We will listen for the final QED_EMITTED signal
+    # We will listen for the final TESTS_PASSED signal
     bus = orchestrator.bus
     test_subscriber = "e2e_test_listener"
-    bus.subscribe(test_subscriber, MsgType.QED_EMITTED.value)
+    bus.subscribe(test_subscriber, MsgType.TESTS_PASSED.value)
 
     # --- Run the Orchestrator ---
-    orchestrator_task = asyncio.create_task(orchestrator.run_forever())
-    await asyncio.sleep(0.1) # Allow time for agents to start and subscribe
+    orchestrator_task = asyncio.create_task(orchestrator.run())
 
     # Manually kick off the process by sending the first TESTS_FAILED message
     # This is faster and more reliable for a test than waiting for the Observer's tick
@@ -106,19 +111,19 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     initial_failed_message = Message(
         type=MsgType.TESTS_FAILED,
         payload={
-                "report_content": initial_result.report_content,
-                "exit_code": initial_result.exit_code,
+            "failed_tests": failed_tests_processed,
+            "failed": initial_result.failed,
+            "passed": initial_result.passed,
         }
     )
-    await bus.publish("amp:global:events", initial_failed_message)
+    await bus.publish(MsgType.TESTS_FAILED.value, initial_failed_message)
 
     # --- Wait for the outcome ---
     try:
-        # Wait for the QED_EMITTED message that signals a successful fix
-        final_messages = await bus.get(test_subscriber, timeout=20.0)
-        assert final_messages, "Did not receive any message on the bus"
-        final_message = final_messages[0]
-        assert final_message.type == MsgType.QED_EMITTED
+        # Wait for the TESTS_PASSED message that signals a successful fix
+        final_message = await bus.get(test_subscriber, timeout=20.0)
+        assert final_message is not None
+        assert final_message.type == MsgType.TESTS_PASSED
     except asyncio.TimeoutError:
         pytest.fail("Test timed out waiting for a fix to be applied and verified.")
     finally:

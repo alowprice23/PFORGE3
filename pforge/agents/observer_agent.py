@@ -1,55 +1,64 @@
 from __future__ import annotations
-import logging
+import time
+import orjson
+from pathlib import Path
 
-from pforge.orchestrator.state_bus import PuzzleState
-from pforge.orchestrator.signals import Message, MsgType
-from pforge.validation.test_runner import run_tests
 from .base_agent import BaseAgent
-
-logger = logging.getLogger("agent.observer")
+from pforge.validation.test_runner import run_tests
+from pforge.orchestrator.signals import MsgType, Message
 
 class ObserverAgent(BaseAgent):
-    name = "observer"
-    tick_interval = 5.0  # Run tests every 5 seconds
+    """
+    The primary sensor of the pForge system. It runs the test suite and
+    reports failures to the message bus to kick off the repair cycle.
+    """
+    name: str = "observer"
+    tick_interval: float = 5.0  # Run tests every 5 seconds
 
-    async def on_startup(self) -> None:
-        self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
+    def __init__(self, bus, config, project):
+        super().__init__(bus, config, project)
+        self.source_root = self.project.root
 
-    async def on_tick(self, state: PuzzleState) -> None:
-        # Also listen for messages that a patch has been applied
-        messages = await self.read_amp()
-        if messages:
-            # If we got any message, it means a patch was applied, so we should run tests.
-            logger.info("ObserverAgent detected a patch, running tests.")
-            await self._run_and_report_tests()
+    async def on_tick(self):
+        """
+        On each tick, run the test suite. If it fails, publish a
+        TESTS_FAILED event.
+        """
+        self.logger.info("Running test suite...")
+
+        test_result = run_tests(test_nodes=[], source_root=self.source_root)
+
+        if test_result is None:
+            self.logger.error("Test runner failed to produce a result.")
             return
 
-        # If no patches, only run tests periodically to avoid spamming
-        if state.tick % 3 == 0:
-            logger.info("ObserverAgent running periodic tests.")
-            await self._run_and_report_tests()
+        if test_result.failed > 0:
+            self.logger.info(f"Test suite failed with {test_result.failed} failures.")
 
-    async def _run_and_report_tests(self) -> None:
-        """Runs the test suite and publishes the result."""
-        try:
-            result = run_tests(test_nodes=[], source_root=self.project.root)
-            if result is None:
-                logger.error("Test runner returned None.")
+            try:
+                report_data = orjson.loads(test_result.report_content)
+            except orjson.JSONDecodeError:
+                self.logger.error("Failed to decode test report JSON.")
                 return
 
-            if result.failed > 0 or result.exit_code != 0:
-                logger.warning("Tests failed! Publishing TESTS_FAILED.")
+            failed_tests = []
+            for test in report_data.get("tests", []):
+                if test.get("outcome") == "failed":
+                    failed_tests.append({
+                        "nodeid": test.get("nodeid"),
+                        "traceback": test.get("longrepr", "")
+                    })
+
+            if failed_tests:
                 message = Message(
                     type=MsgType.TESTS_FAILED,
                     payload={
-                        "report_content": result.report_content,
-                        "exit_code": result.exit_code,
+                        "failed_tests": failed_tests,
                     }
                 )
-                await self.bus.publish(MsgType.TESTS_FAILED.value, message)
-            else:
-                logger.info("Tests passed! Publishing QED_EMITTED.")
-                message = Message(type=MsgType.QED_EMITTED, payload={})
-                await self.bus.publish(MsgType.QED_EMITTED.value, message)
-        except Exception as e:
-            logger.exception("ObserverAgent failed to run tests: %s", e)
+                await self.publish(MsgType.TESTS_FAILED.value, message)
+                self.logger.info(f"Published TESTS_FAILED event with {len(failed_tests)} failures.")
+        else:
+            self.logger.info("Test suite passed.")
+            message = Message(type=MsgType.TESTS_PASSED, payload={})
+            await self.publish(MsgType.TESTS_PASSED.value, message)

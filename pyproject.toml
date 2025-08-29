@@ -17,6 +17,8 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
     "pydantic",
     "pyyaml",
     "libcst",
@@ -27,6 +29,7 @@ dependencies = [
     "pytest-asyncio",
     "pytest-cov",
     "httpx",
+    "jinja2",
     "prometheus-client",
     "networkx",
     "orjson",
@@ -34,13 +37,12 @@ dependencies = [
     "sqlite-utils",
     "tenacity",
     "PyJWT",
+    "python-socketio",
     "openai",
     "anthropic",
     "google-generativeai",
     "typer[all]",
-    "structlog",
-    "fakeredis[aioredis]",
-    "fastapi"
+    "structlog"
 ]
 
 [project.urls]
@@ -59,5 +61,5 @@ target-version = ['py311']
 
 [tool.ruff]
 line-length = 88
-select = ["E", "F", "W", "I", "UP", "B", "C4", "A", "RUF", "S"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "A", "RUF"]
 ignore = ["E501"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import logging
 from typing import List, Dict, Any
+
 import google.generativeai as genai
 
 from .retry import retry_llm
@@ -25,16 +26,32 @@ class GeminiClient:
 
     @retry_llm()
     async def chat(self, prompt: str, **kwargs) -> str:
+        """
+        Generates a response from a Gemini model.
+
+        Args:
+            prompt: The text prompt to send to the model.
+            **kwargs: Additional arguments to pass to the Gemini API.
+
+        Returns:
+            The string content of the assistant's reply.
+
+        Raises:
+            BudgetExceededError: If the estimated token usage exceeds the budget.
+            Exception: If the API call fails after retries.
+        """
         if not self.model:
             logger.info("Simulating Gemini call (offline mode).")
+            # The PredictorAgent expects a JSON array of suggestions.
             return "[]"
 
+        # Estimate token usage for budget check
         estimated_prompt_tokens = len(prompt) // 3
         max_completion_tokens = kwargs.get("max_output_tokens", 1024)
         estimated_total = estimated_prompt_tokens + max_completion_tokens
 
         if self.budget_meter:
-            if not self.budget_meter.spend(estimated_total):
+            if not await self.budget_meter.spend(estimated_total):
                 raise BudgetExceededError(f"Gemini call would exceed budget. Estimated tokens: {estimated_total}")
 
         logger.info("Making Gemini call to model '%s'...", self.model_name)

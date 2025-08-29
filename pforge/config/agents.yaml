@@ -1,98 +1,96 @@
-# This file defines the configuration for each agent in the pForge system.
-# The keys are the agent names, and the values are their configurations.
 agents:
-  observer:
+  - name: observer
     enabled: true
     spawn_weight: 1.0
     spawn_threshold: 0.20
     retire_threshold: -0.10
     max_concurrency: 1
 
-  spec_oracle:
+  - name: spec_oracle
     enabled: true
     spawn_weight: 0.8
     spawn_threshold: 0.15
     retire_threshold: -0.05
     max_concurrency: 1
 
-  predictor:
+  - name: predictor
     enabled: true
     spawn_weight: 0.9
     spawn_threshold: 0.18
     retire_threshold: -0.08
     max_concurrency: 1
 
-  planner:
+  - name: planner
     enabled: true
     spawn_weight: 1.2
     spawn_threshold: 0.10
     retire_threshold: -0.05
     max_concurrency: 1
 
-  fixer:
+  - name: fixer
     enabled: true
     spawn_weight: 1.4
     spawn_threshold: 0.25
     retire_threshold: 0.02
     max_concurrency: 2
 
-  misfit:
+  - name: misfit
     enabled: true
     spawn_weight: 1.1
     spawn_threshold: 0.12
     retire_threshold: -0.03
     max_concurrency: 1
 
-  false_piece:
+  - name: false_piece
     enabled: true
     spawn_weight: 0.7
     spawn_threshold: 0.08
     retire_threshold: -0.02
     max_concurrency: 1
 
-  backtracker:
+  - name: backtracker
     enabled: true
     spawn_weight: 0.6
     spawn_threshold: 0.05
     retire_threshold: -0.01
     max_concurrency: 1
 
-  conflict_detector:
+  - name: conflict_detector
     enabled: true
     spawn_weight: 0.4
     spawn_threshold: 0.07
     retire_threshold: -0.02
     max_concurrency: 1
 
-  efficiency_analyst:
+  - name: efficiency_analyst
     enabled: true
     spawn_weight: 0.3
     spawn_threshold: 0.0
     retire_threshold: 0.0
     max_concurrency: 1
 
-  intent_router:
+  - name: intent_router
     enabled: true
     spawn_weight: 0.4
     spawn_threshold: 0.0
     retire_threshold: 0.0
     max_concurrency: 1
 
-  recovery:
+  - name: recovery
     enabled: true
     spawn_weight: 1.5
     spawn_threshold: 0.3
     retire_threshold: 0.0
     max_concurrency: 1
 
-  self_repair:
+  - name: self_repair
     enabled: true
     spawn_weight: 0.5
     spawn_threshold: 0.1
     retire_threshold: -0.1
     max_concurrency: 1
 
-  summarizer:
+  - name: summarizer
     enabled: true
     spawn_weight: 0.5
     spawn_threshold: 0.1

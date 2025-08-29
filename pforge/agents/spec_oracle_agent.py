@@ -1,122 +1,115 @@
 from __future__ import annotations
-import asyncio
-import hashlib
-import json
 import logging
-import os
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Set, List, TYPE_CHECKING
+import re
 
-from pforge.orchestrator.state_bus import PuzzleState
 from .base_agent import BaseAgent
+from pforge.orchestrator.signals import MsgType, Message
 
-SANDBOX_ROOT = Path(os.getenv("SANDBOX_ROOT", "sandbox_test"))
-DOC_DIRS: List[Path] = [SANDBOX_ROOT, SANDBOX_ROOT / "docs"]
+if TYPE_CHECKING:
+    from pforge.messaging.in_memory_bus import InMemoryBus
 
-logger = logging.getLogger("agent.spec_oracle")
+logger = logging.getLogger(__name__)
 
 class SpecOracleAgent(BaseAgent):
-    name = "spec_oracle"
-    weight = 0.8
-    spawn_threshold = 0.15
-    retire_threshold = -0.05
-    max_tokens_tick = 8_000
-    tick_interval = 15.0
+    """
+    Ingests non-code artifacts to build a Target Graph (TG) of what the
+    software *should* be, and reports on gaps between the spec and the code.
+    """
+    name: str = "spec_oracle"
+    tick_interval: float = 10.0  # Re-scan for spec changes periodically
 
-    _hash_cache: str | None = None
-    _tg_nodes: Set[str] = set()
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        super().__init__(bus, config, project)
+        self.source_root = self.project.root
+        self.doc_dirs: List[Path] = [self.source_root, self.source_root / "docs"]
+        self.target_graph_nodes: Set[str] = set()
+        self.code_manifest: Set[str] = set()
 
-    async def on_startup(self) -> None:
-        logger.info("SpecOracleAgent initial spec ingest")
-        await self._ingest_spec()
+        # Subscribe to messages that might change the state of the code
+        self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
+        # For now, we'll also listen for the observer's manifest this way
+        self.bus.subscribe(self.name, "file_manifest")
 
-    async def on_tick(self, state: PuzzleState) -> None:
-        if self._docs_changed():
-            await self._ingest_spec()
-
-        manifest_msg = await self._latest_manifest()
-        if manifest_msg:
-            code_files = set(manifest_msg["payload"]["files"])
-            missing = {n for n in self._tg_nodes if not self._node_realised(n, code_files)}
-            if missing:
-                await self.dE(len(missing))
-                await self.send_amp(
-                    action="spec_gaps",
-                    payload={"missing_nodes": list(missing)},
-                    broadcast=True,
-                )
-
-    async def _ingest_spec(self) -> None:
-        nodes = set()
-        for doc_dir in DOC_DIRS:
-            if not doc_dir.exists():
-                continue
-            for file in doc_dir.rglob("*"):
-                if file.suffix.lower() in {".md", ".markdown", ".rst"}:
-                    nodes.update(self._parse_markdown(file))
-                elif file.name.startswith(("openapi", "swagger")):
-                    nodes.update(self._parse_openapi(file))
-
-        self._tg_nodes = nodes
-        await self._save_to_neo4j(nodes)
-        await self.send_amp(action="tg_update", payload={"nodes": list(nodes)}, broadcast=True)
-        self._hash_cache = self._current_hash()
-        logger.info("SpecOracleAgent ingested %d TG nodes", len(nodes))
+    async def on_startup(self):
+        """On startup, perform an initial full scan of the specification."""
+        self.logger.info("Performing initial spec ingest...")
+        await self.on_tick()
 
     def _parse_markdown(self, path: Path) -> Set[str]:
+        """A simple parser to extract spec nodes from Markdown files."""
         content = path.read_text(encoding="utf-8", errors="ignore")
         nodes: Set[str] = set()
+        # Extract headings as nodes
         for line in content.splitlines():
             if line.startswith("#"):
-                title = line.lstrip("# ").strip()
+                title = line.lstrip("# ").strip().lower()
                 if title:
-                    nodes.add(title.lower())
-            if line.strip().startswith("- [ ]"):
-                task = line.split("]")[-1].strip()
-                nodes.add(task.lower())
+                    nodes.add(title)
+            # Extract unchecked task list items as gap nodes
+            if re.match(r'^\s*-\s*\[\s\]', line):
+                task = line.split("]", 1)[-1].strip().lower()
+                if task:
+                    nodes.add(task)
         return nodes
 
-    def _parse_openapi(self, path: Path) -> Set[str]:
-        try:
-            import yaml
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-            nodes = {f"{method.upper()} {route}" for route, item in data["paths"].items() for method in item}
-            return nodes
-        except Exception as exc:
-            logger.warning("Failed to parse OpenAPI: %s: %s", path, exc)
-            return set()
+    async def _ingest_spec_files(self):
+        """Scans doc directories and parses files to build the Target Graph."""
+        new_nodes: Set[str] = set()
+        for doc_dir in self.doc_dirs:
+            if not doc_dir.exists() or not doc_dir.is_dir():
+                continue
+            for file_path in doc_dir.rglob("*"):
+                if file_path.suffix.lower() in {".md", ".markdown"}:
+                    new_nodes.update(self._parse_markdown(file_path))
+                # Add parsers for OpenAPI, etc. here in the future
 
-    async def _save_to_neo4j(self, nodes: Set[str]) -> None:
-        logger.warning("Neo4j is not available in local-only mode. Skipping TG persistence.")
+        if new_nodes != self.target_graph_nodes:
+            self.logger.info(f"Spec changed. Found {len(new_nodes)} target graph nodes.")
+            self.target_graph_nodes = new_nodes
 
-    def _current_hash(self) -> str:
-        md5 = hashlib.md5()
-        for doc_dir in DOC_DIRS:
-            if doc_dir.exists():
-                for file in doc_dir.rglob("*"):
-                    if file.is_file():
-                        md5.update(str(file.relative_to(SANDBOX_ROOT)).encode())
-                        md5.update(str(int(file.stat().st_mtime)).encode())
-        return md5.hexdigest()
+    async def on_tick(self):
+        """
+        Periodically re-scans the spec and compares it to the last known
+        code manifest, publishing any gaps.
+        """
+        await self._ingest_spec_files()
 
-    def _docs_changed(self) -> bool:
-        new_hash = self._current_hash()
-        if new_hash != self._hash_cache:
-            return True
-        return False
+        # Check for messages from other agents
+        message = await self.bus.get(self.name, timeout=0.1)
+        if message:
+            if message.type == "file_manifest":
+                self.code_manifest = set(message.payload.get("files", []))
+                self.logger.info(f"Received code manifest with {len(self.code_manifest)} files.")
+            elif message.type == MsgType.FIX_PATCH_APPLIED:
+                # A fix was applied, which might have closed a gap.
+                # We should re-compare the spec to the code.
+                # The observer will send a new manifest soon.
+                pass
 
-    async def _latest_manifest(self) -> Dict | None:
-        msgs = await self.read_amp()
-        for msg in reversed(msgs):
-            if msg.get("action") == "file_manifest":
-                return msg
-        return None
+        # Compare spec to code and find gaps
+        if not self.target_graph_nodes or not self.code_manifest:
+            return
+
+        gaps = {node for node in self.target_graph_nodes if not self._node_realised(node, self.code_manifest)}
+
+        if gaps:
+            gap_message = Message(
+                type=MsgType.TESTS_FAILED, # We can treat spec gaps as a type of test failure
+                payload={"failed_tests": [{"nodeid": f"spec_gap::{g}", "traceback": f"Specification node '{g}' is not implemented."} for g in gaps]}
+            )
+            await self.publish(MsgType.TESTS_FAILED.value, gap_message)
+            self.logger.info(f"Published {len(gaps)} specification gaps as test failures.")
 
     def _node_realised(self, node_name: str, code_files: Set[str]) -> bool:
-        slug = (
-            node_name.replace(" ", "_")
-            .replace("/", "_")
-            .replace("-", "_")
-            .lower()
-        )
+        """
+        A crude heuristic to check if a spec node is "realised" in the code.
+        It checks if a slugified version of the node name appears in any file path.
+        """
+        # A real implementation would be much more sophisticated, using code parsing,
+        # embeddings, or a formal mapping from spec to code.
+        slug = re.sub(r'[^a-z0-9]+', '_', node_name.lower()).strip('_')
+        if not slug:
+            return False
         return any(slug in f.lower() for f in code_files)

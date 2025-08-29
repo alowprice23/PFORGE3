@@ -1,140 +1,81 @@
 from __future__ import annotations
 import asyncio
 import logging
-from enum import Enum, auto
-from typing import Any, Dict, Optional
-import time
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
-from pforge.orchestrator.state_bus import StateBus, PuzzleState
-from pforge.orchestrator.signals import (
-    Message,
-    MsgType,
-    BaseDelta,
-    GapDelta,
-    MisfitDelta,
-    FalsePieceDelta,
-    RiskDelta,
-    BacktrackDelta,
-    EntropyDelta,
-)
+if TYPE_CHECKING:
+    from pforge.config import Config
+    from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.orchestrator.state_bus import PuzzleState
+    from pforge.project import Project
 
-class Phase(Enum):
-    BORN = auto()
-    WARM = auto()
-    ACTIVE = auto()
-    DORMANT = auto()
-    RETIRED = auto()
 
-class BaseAgent:
+class BaseAgent(ABC):
+    """
+    Abstract base class for all agents in the pForge system.
+
+    Defines the basic lifecycle (setup, run, shutdown) and provides
+    a common interface for interacting with the message bus.
+    """
+    # --- Class-level metadata for the scheduler/registry ---
     name: str = "base-agent"
-    weight: float = 1.0
-    spawn_threshold: float = 0.0
-    retire_threshold: float = 0.0
-    max_tokens_tick: int = 2_000
-    tick_interval: float = 2.0
+    tick_interval: float = 1.0  # Default seconds between on_tick calls
 
-    def __init__(self, bus, state_bus: StateBus, eff_engine, project) -> None:
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+        if not bus:
+            raise ValueError("A message bus instance is required.")
         self.bus = bus
-        self.state_bus = state_bus
-        self.eff_engine = eff_engine
+        self.config = config
         self.project = project
-        self.phase: Phase = Phase.BORN
-        self.logger = logging.getLogger(f"agent.{self.name}")
-        self._running = True
+        self.logger = logging.getLogger(f"pforge.agent.{self.name}")
+        self._is_running = False
 
-    async def run_loop(self) -> None:
-        self.phase = Phase.WARM
+    async def run_loop(self):
+        """The main execution loop for the agent, called by the Orchestrator."""
+        self._is_running = True
         await self.on_startup()
+        self.logger.info("Agent '%s' started.", self.name)
 
-        self.phase = Phase.ACTIVE
-        self.logger.info("Agent %s ACTIVE", self.name)
-
-        while self._running:
-            snap: PuzzleState = self.state_bus.snapshot()
+        while self._is_running:
             try:
-                await self.on_tick(snap)
+                # In a full implementation, the agent would get the latest
+                # PuzzleState from the StateBus here. For now, on_tick is parameter-less.
+                await self.on_tick()
             except asyncio.CancelledError:
-                self.logger.info("Agent %s cancelled", self.name)
+                self.logger.info("Agent '%s' was cancelled.", self.name)
                 break
-            except Exception as exc:
-                self.logger.exception("Agent %s tick error: %s", self.name, exc)
+            except Exception:
+                self.logger.exception("An error occurred in agent '%s' on_tick.", self.name)
 
             await asyncio.sleep(self.tick_interval)
 
-        self.phase = Phase.RETIRED
         await self.on_shutdown()
-        self.logger.info("Agent %s RETIRED", self.name)
+        self.logger.info("Agent '%s' shut down.", self.name)
 
-    async def stop(self) -> None:
-        self._running = False
+    def stop(self):
+        """Signals the agent to stop its execution loop."""
+        self.logger.info("Stopping agent '%s'...", self.name)
+        self._is_running = False
 
-    async def on_startup(self) -> None:
-        return
+    # --- Hooks for subclasses to implement ---
 
-    async def on_tick(self, state: PuzzleState) -> None:
+    async def on_startup(self):
+        """Called once when the agent is starting up."""
+        pass
+
+    @abstractmethod
+    async def on_tick(self):
+        """
+        The main logic of the agent, called periodically.
+        Subclasses must implement this method.
+        """
         raise NotImplementedError
 
-    async def on_shutdown(self) -> None:
-        return
+    async def on_shutdown(self):
+        """Called once when the agent is shutting down."""
+        pass
 
-    async def send_amp(
-        self,
-        action: str,
-        payload: Dict[str, Any],
-        metrics: Optional[Dict[str, float]] = None,
-        broadcast: bool = False,
-    ) -> None:
-        # This is a bridge between old string-based actions and new Enum-based types.
-        # A full refactor would remove the `action` string argument entirely.
-        action_to_type_map = {
-            "fix_task": MsgType.FIX_PATCH_PROPOSED,
-            "predictions": MsgType.PLAN_PROPOSED,
-            "file_manifest": MsgType.FILE_MANIFEST,
-        }
-        msg_type = action_to_type_map.get(action)
-        if not msg_type:
-            self.logger.error("send_amp called with unknown action: %s", action)
-            return
-
-        topic = "amp:global:events" if broadcast else f"amp:{self.name}:out"
-        # The bus now expects structured Message objects
-        message = Message(type=msg_type, payload={**payload, "metrics": metrics or {}})
+    async def publish(self, topic: str, message: Any):
+        """A simple helper to publish a message to a topic on the bus."""
         await self.bus.publish(topic, message)
-
-    async def read_amp(self) -> list[Message]:
-        return await self.bus.get(self.name)
-
-    async def publish_delta(self, delta: BaseDelta) -> None:
-        state = self.state_bus.get_latest_state()
-        if delta.kind == "gap":
-            state.gaps += delta.value
-        elif delta.kind == "misfit":
-            state.misfits += delta.value
-        elif delta.kind == "false_piece":
-            state.false_pieces += delta.value
-        elif delta.kind == "risk":
-            state.risk += delta.value
-        elif delta.kind == "backtrack":
-            state.backtracks += delta.value
-        elif delta.kind == "entropy":
-            state.entropy += delta.value
-        await self.state_bus.publish(state)
-
-
-    async def dE(self, value: int) -> None:
-        await self.publish_delta(GapDelta(agent=self.name, value=value, ts=time.time()))
-
-    async def dM(self, value: int) -> None:
-        await self.publish_delta(MisfitDelta(agent=self.name, value=value, ts=time.time()))
-
-    async def dF(self, value: int) -> None:
-        await self.publish_delta(FalsePieceDelta(agent=self.name, value=value, ts=time.time()))
-
-    async def dR(self, value: int) -> None:
-        await self.publish_delta(RiskDelta(agent=self.name, value=value, ts=time.time()))
-
-    async def dB(self, value: int) -> None:
-        await self.publish_delta(BacktrackDelta(agent=self.name, value=value, ts=time.time()))
-
-    async def dH(self, value: float) -> None:
-        await self.publish_delta(EntropyDelta(agent=self.name, value=value, ts=time.time()))
