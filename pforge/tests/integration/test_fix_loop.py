@@ -18,30 +18,10 @@ def e2e_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
 
-        # Create a valid, isolated config for the test
-        config_dir = project_dir / "pforge" / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "settings.yaml").write_text("doctor:\n  retry_limit: 1\n")
-        (config_dir / "llm_providers.yaml").write_text("providers: []\n")
-        (config_dir / "quotas.yaml").write_text("quotas: []\n")
-        (config_dir / "agents.yaml").write_text(
-            "agents:\n"
-            "  observer:\n"
-            "    enabled: true\n"
-            "    spawn_threshold: 0.20\n"
-            "    retire_threshold: -0.10\n"
-            "  planner:\n"
-            "    enabled: true\n"
-            "    spawn_threshold: 0.10\n"
-            "    retire_threshold: -0.05\n"
-            "  fixer:\n"
-            "    enabled: true\n"
-            "    spawn_threshold: 0.25\n"
-            "    retire_threshold: 0.02\n"
-        )
+        (project_dir / "pforge.toml").write_text("[doctor]\nretry_limit = 1\n")
 
         source_dir = project_dir / "pforge"
-        source_dir.mkdir(exist_ok=True)
+        source_dir.mkdir()
         (source_dir / "__init__.py").touch()
         (source_dir / "buggy.py").write_text("def my_buggy_function():\n    return 1\n")
 
@@ -73,7 +53,7 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     """
     project_dir = e2e_project
     project = Project(project_dir)
-    config = Config.load(config_dir=project_dir / "pforge" / "config")
+    config = Config.load(path=project_dir / "pforge.toml")
 
     # --- Mock the LLM response ---
     correct_code = "def my_buggy_function():\n    return 2\n"

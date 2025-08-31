@@ -14,36 +14,14 @@ from pforge.validation.test_runner import TestRunnerResult
 @pytest.fixture
 def project_with_retry_limit(tmp_path):
     """Creates a dummy project with a retry_limit of 2 in pforge.toml."""
+    (tmp_path / "pforge").mkdir()
+    (tmp_path / "pforge.toml").write_text("[doctor]\nretry_limit = 2\n")
     project_root = tmp_path
-
-    # Create a valid, isolated config for the test
-    config_dir = project_root / "pforge" / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "settings.yaml").write_text("doctor:\n  retry_limit: 2\n")
-    (config_dir / "llm_providers.yaml").write_text("providers: []")
-    (config_dir / "quotas.yaml").write_text("quotas: []")
-    (config_dir / "agents.yaml").write_text(
-        "agents:\n"
-        "  observer:\n"
-        "    enabled: true\n"
-        "    spawn_threshold: 0.20\n"
-        "    retire_threshold: -0.10\n"
-        "  planner:\n"
-        "    enabled: true\n"
-        "    spawn_threshold: 0.10\n"
-        "    retire_threshold: -0.05\n"
-        "  fixer:\n"
-        "    enabled: true\n"
-        "    spawn_threshold: 0.25\n"
-        "    retire_threshold: 0.02\n"
-    )
-
     (project_root / "pforge").mkdir(exist_ok=True)
     (project_root / "pforge" / "buggy.py").write_text("def foo(): return 1")
     # Also create a dummy test file so the test runner has something to find
     tests_dir = project_root / "pforge" / "tests"
     tests_dir.mkdir(exist_ok=True)
-    (tests_dir / "__init__.py").touch()
     (tests_dir / "test_dummy.py").write_text("def test_dummy(): assert True")
     (tests_dir / "test_buggy.py").write_text("from pforge.buggy import foo\n\ndef test_foo():\n    assert foo() == 2")
 
@@ -72,9 +50,9 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
     4. The loop stops after the retry limit is reached.
     """
     # --- Setup ---
-    config = Config.load(config_dir=project_with_retry_limit.root / "pforge" / "config")
+    config = Config.load(path=project_with_retry_limit.root / "pforge.toml")
     # Ensure we have a low retry limit for the test
-    assert config.settings['doctor']['retry_limit'] == 2
+    assert config.doctor.retry_limit == 2
 
     orchestrator = Orchestrator(config, project_with_retry_limit)
     orchestrator.setup_agents()
@@ -129,9 +107,15 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
         assert "A previous attempt to fix the bug" in retry_description
         assert "Please analyze the previous mistake" in retry_description
 
+        # The orchestrator should have logged that it's giving up
+        # We can't easily check logs here, but the call count implies it stopped.
+
         # --- Cleanup ---
+        # The orchestrator should stop on its own after giving up.
+        # We cancel here to be sure the task is cleaned up, but it might already be done.
         run_task.cancel()
         try:
             await run_task
         except asyncio.CancelledError:
+            # This is expected if the task was still running.
             pass

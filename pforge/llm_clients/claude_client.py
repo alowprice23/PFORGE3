@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ClaudeClient:
     """A client for interacting with Anthropic's Claude models, with budget and retry support."""
 
-    def __init__(self, api_key: str | None, model: str = "claude-3-opus-20240229", budget_meter: BudgetMeter | None = None):
+    def __init__(self, api_key: str | None, model: str = "claude-3-sonnet-20240229", budget_meter: BudgetMeter | None = None):
         self.model = model
         self.budget_meter = budget_meter
 

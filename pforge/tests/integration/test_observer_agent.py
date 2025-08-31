@@ -21,18 +21,8 @@ async def test_observer_agent_detects_failure():
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         project_path = Path(tmpdir)
-
-        # Create a valid, isolated config for the test
-        config_dir = project_path / "pforge" / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "settings.yaml").write_text("doctor:\n  retry_limit: 1\n")
-        (config_dir / "llm_providers.yaml").write_text("providers: []\n")
-        (config_dir / "quotas.yaml").write_text("quotas: []\n")
-        (config_dir / "agents.yaml").write_text(
-            "agents:\n"
-            "  observer:\n"
-            "    enabled: true\n"
-        )
+        # The agent needs a pforge.toml to initialize Config
+        (project_path / "pforge.toml").write_text("")
 
         # Create a buggy file and a failing test
         (project_path / "buggy_module.py").write_text("def buggy_function():\n    return 'bug'\n")
@@ -47,7 +37,7 @@ async def test_observer_agent_detects_failure():
 
         bus = InMemoryBus()
         project = Project(project_path)
-        config = Config.load(config_dir=config_dir)
+        config = Config.load(project.root / "pforge.toml")
 
         observer = ObserverAgent(bus=bus, config=config, project=project)
 

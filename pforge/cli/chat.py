@@ -1,12 +1,27 @@
 from __future__ import annotations
-import os
+
 import asyncio
+import json
+import os
+import textwrap
+
 import typer
 from rich.console import Console
 from rich.text import Text
+
 from pforge.llm_clients.claude_client import ClaudeClient
+from . import agent_skills as skills
+import textwrap
 
 console = Console()
+
+# Create a mapping from skill names to the actual functions
+AVAILABLE_SKILLS = {
+    "run_tests": skills.run_tests,
+    "list_files": skills.list_files,
+    "read_file": skills.read_file,
+    "apply_patch": skills.apply_patch,
+}
 
 def start_chat_repl():
     """
@@ -15,75 +30,101 @@ def start_chat_repl():
     console.print(Text("Welcome to the pForge Interactive Chat.", style="bold green"))
     console.print("Type your requests or questions below. Type 'exit' or 'quit' to end.")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    # Load the API key from an environment variable
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         console.print(Text("Error: ANTHROPIC_API_KEY environment variable not set.", style="bold red"))
-        raise typer.Exit(code=1)
+        return
 
-    claude_client = ClaudeClient(api_key=api_key)
+    # Pass the list of skill functions to the client
+    claude_client = ClaudeClient(api_key=api_key, tools=list(AVAILABLE_SKILLS.values()))
 
     async def chat_loop():
-        import re
-        from pathlib import Path
-        import subprocess
+        # Hardcode the prompt for testing
+        try:
+            with open("pforge/cli/patch.txt", "r") as f:
+                patch_content = f.read()
+            prompt_text = f"Excellent. Here is the patch you generated. Please apply it to the codebase.\n\n{patch_content}"
+        except FileNotFoundError:
+            prompt_text = "Hello! What can I help you with today?"
 
-        fix_pattern = re.compile(r"fix file '(.+?)' with error '(.+?)'")
+        console.print(f"You> {prompt_text}")
 
-        while True:
-            try:
-                prompt_text = await asyncio.to_thread(typer.prompt, "You", prompt_suffix="> ")
+        messages = [{"role": "user", "content": prompt_text}]
 
-                if prompt_text.lower() in ["exit", "quit"]:
+        try:
+            while True:
+                response = await claude_client.chat(messages, max_tokens=4096)
+
+                # Append the assistant's response to the message history
+                # The response from the API is not a dict, so we need to convert it.
+                # The content can be a list of blocks (text, tool_use).
+                response_content = []
+                for block in response.content:
+                    if block.type == "text":
+                        response_content.append({"type": "text", "text": block.text})
+                    elif block.type == "tool_use":
+                        response_content.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        })
+
+                messages.append({"role": response.role, "content": response_content})
+
+                if response.stop_reason != "tool_use":
+                    # If the model is done, break the loop and print the final text
                     break
 
-                match = fix_pattern.match(prompt_text)
-                if match:
-                    file_path_str, error_message = match.groups()
-                    file_path = Path(file_path_str)
+                console.print(Text("pForge wants to use a tool...", style="italic yellow"))
 
-                    if not file_path.exists():
-                        console.print(Text(f"Error: File not found at {file_path_str}", style="bold red"))
-                        continue
+                tool_results_content = []
+                for tool_call in response.content:
+                    if tool_call.type == "tool_use":
+                        tool_name = tool_call.name
+                        tool_input = tool_call.input
+                        tool_id = tool_call.id
 
-                    file_content = file_path.read_text()
+                        console.print(Text(f"  Tool: {tool_name}, Input: {tool_input}", style="yellow"))
 
-                    fix_prompt = (
-                        f"The following file has a bug:\n\n"
-                        f"File: {file_path_str}\n"
-                        f"Content:\n```\n{file_content}\n```\n\n"
-                        f"The error message is:\n```\n{error_message}\n```\n\n"
-                        f"Please provide the corrected code for the entire file. Do not add any extra explanations, just the code."
-                    )
+                        if tool_name in AVAILABLE_SKILLS:
+                            skill_function = AVAILABLE_SKILLS[tool_name]
+                            try:
+                                result = skill_function(**tool_input)
+                                if isinstance(result, dict):
+                                    result = json.dumps(result, indent=2)
+                            except Exception as e:
+                                result = f"Error executing tool {tool_name}: {e}"
 
-                    messages = [{"role": "user", "content": fix_prompt}]
-
-                    try:
-                        console.print(Text("pForge: Thinking...", style="bold yellow"))
-                        suggested_fix = await claude_client.chat(messages, max_tokens=4096)
-
-                        console.print(Text("pForge: I have a suggested fix:", style="bold blue"))
-                        console.print(suggested_fix)
-
-                        if typer.confirm("Apply this fix?"):
-                            subprocess.run(
-                                ["python", "-m", "pforge.cli.main", "fix", "apply", file_path_str, suggested_fix],
-                                check=True
-                            )
+                            tool_results_content.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": str(result),
+                            })
                         else:
-                            console.print(Text("Fix not applied.", style="yellow"))
+                            tool_results_content.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": f"Error: Tool '{tool_name}' not found.",
+                                "is_error": True,
+                            })
 
-                    except Exception as e:
-                        console.print(Text(f"Error during API call: {e}", style="bold red"))
-                else:
-                    messages = [{"role": "user", "content": prompt_text}]
-                    try:
-                        response_text = await claude_client.chat(messages, max_tokens=2048)
-                        console.print(Text("pForge:", style="bold blue"), response_text)
-                    except Exception as e:
-                        console.print(Text(f"Error during API call: {e}", style="bold red"))
+                # Add the tool results to the message history to continue the conversation
+                messages.append({"role": "user", "content": tool_results_content})
+                console.print(Text("Sending tool results back to pForge...", style="italic yellow"))
 
-            except (KeyboardInterrupt, EOFError):
-                break
+            # After the loop, the last response should be a text response
+            final_text = ""
+            for block in response.content:
+                if block.type == "text":
+                    final_text += block.text + "\n"
+
+            console.print(Text("pForge:", style="bold blue"), final_text)
+
+        except Exception as e:
+            console.print(Text(f"Error during API call: {e}", style="bold red"))
+
 
     asyncio.run(chat_loop())
 

@@ -18,18 +18,7 @@ async def test_planner_agent_creates_fix_task():
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         project_path = Path(tmpdir)
-
-        # Create a valid, isolated config for the test
-        config_dir = project_path / "pforge" / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "settings.yaml").write_text("doctor:\n  retry_limit: 1\n")
-        (config_dir / "llm_providers.yaml").write_text("providers: []\n")
-        (config_dir / "quotas.yaml").write_text("quotas: []\n")
-        (config_dir / "agents.yaml").write_text(
-            "agents:\n"
-            "  planner:\n"
-            "    enabled: true\n"
-        )
+        (project_path / "pforge.toml").write_text("")
 
         # The planner's _infer_source_from_test expects a specific structure
         pforge_dir = project_path / "pforge"
@@ -40,7 +29,7 @@ async def test_planner_agent_creates_fix_task():
 
         bus = InMemoryBus()
         project = Project(project_path)
-        config = Config.load(config_dir=config_dir)
+        config = Config.load(project.root / "pforge.toml")
 
         # The planner subscribes to topics on init, so it must be created before publishing
         planner = PlannerAgent(bus=bus, config=config, project=project)

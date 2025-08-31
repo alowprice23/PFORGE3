@@ -128,7 +128,7 @@ class FixerAgent(BaseAgent):
             }
 
         result_message = Message(type=result_msg_type, payload=result_payload)
-        result_message.payload["proof"] = proof.dict()
+        result_message.payload["proof"] = proof.model_dump()
 
         logger.info(f"[FixerLog] Publishing {result_msg_type.value} for {file_path}")
         await self.publish(result_msg_type.value, result_message)
