@@ -20,11 +20,15 @@ async def test_planner_agent_creates_fix_task():
         project_path = Path(tmpdir)
         (project_path / "pforge.toml").write_text("")
 
-        # The planner's _infer_source_from_test expects a specific structure
-        pforge_dir = project_path / "pforge"
-        pforge_tests_dir = pforge_dir / "tests"
-        pforge_tests_dir.mkdir(parents=True)
-        (pforge_tests_dir / "test_dummy.py").write_text("assert True")
+        # The planner's _infer_source_from_test expects a specific structure.
+        # Create a dummy source file for it to find.
+        source_dir = project_path / "pforge"
+        source_dir.mkdir()
+        (source_dir / "buggy_module.py").touch()
+
+        tests_dir = project_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_buggy_module.py").touch()
 
 
         bus = InMemoryBus()
@@ -43,7 +47,7 @@ async def test_planner_agent_creates_fix_task():
             type=MsgType.TESTS_FAILED,
             payload={
                 "failed_tests": [{
-                    "nodeid": "pforge/tests/test_buggy_module.py::test_buggy_function_returns_fixed",
+                    "nodeid": "tests/test_buggy_module.py::test_buggy_function_returns_fixed",
                     "traceback": "AssertionError: assert 'bug' == 'fixed'"
                 }],
                 "passed": 0, "failed": 1, "skipped": 0,

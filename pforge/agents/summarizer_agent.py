@@ -44,7 +44,7 @@ class SummarizerAgent(BaseAgent):
                 f"that was applied to the file '{file_path}':\n\n{patch}"
             )
 
-            response = await self.llm_client.generate(prompt)
-            summary = response["choices"][0]["message"]["content"]
+            response = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
+            summary = response.strip()
 
             logger.info(f"Summary: {summary}")

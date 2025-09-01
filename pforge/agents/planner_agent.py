@@ -25,34 +25,39 @@ class PlannerAgent(BaseAgent):
         self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
         self.bus.subscribe(self.name, MsgType.FIX_FAILED.value)
 
-    def _infer_source_from_test(self, test_path_str: str) -> str:
+    def _infer_source_from_test(self, test_path_str: str) -> str | None:
         """
-        Infers the source file path from a test file path.
-        e.g., 'pforge/tests/integration/test_fixer_agent.py' -> 'pforge/agents/fixer_agent.py'
+        Infers a potential source file path from a test file path.
+
+        e.g., 'tests/integration/test_fixer_agent.py' -> 'pforge/agents/fixer_agent.py'
+        This is a heuristic and might not always be correct.
         """
         test_path = Path(test_path_str)
 
-        # Remove 'tests/' prefix and 'test_' from filename
-        parts = list(test_path.parts)
-
-        # Find the 'tests' directory and rebuild the path from the part after it
         try:
-            tests_index = parts.index("tests")
-            # This assumes the structure inside tests mirrors the structure in pforge
-            source_parts = parts[tests_index + 1 :]
+            # Find the path relative to the 'tests' directory
+            relative_path = test_path.relative_to("tests")
         except ValueError:
-            # If 'tests' is not in the path, assume it's a top-level test
-            source_parts = parts
+            # If 'tests' is not in the path, we can't infer the source.
+            logger.warning(f"Could not determine source for test path: {test_path_str}")
+            return None
 
-        if not source_parts:
-            return ""
+        # Remove 'test_' from the filename
+        source_filename = relative_path.name.replace("test_", "", 1)
 
-        filename = source_parts[-1]
-        if filename.startswith("test_"):
-            source_parts[-1] = filename.replace("test_", "", 1)
+        # Look for a corresponding source file in common source directories
+        # (e.g., 'pforge', 'src'). This makes the heuristic more robust.
+        potential_source_dirs = ["pforge", "src", "."]
 
-        # Reconstruct path relative to the pforge package root
-        return str(Path("pforge") / Path(*source_parts))
+        for source_dir in potential_source_dirs:
+            potential_path = self.project.root / source_dir / relative_path.parent / source_filename
+            if potential_path.exists():
+                logger.info(f"Inferred source path: {potential_path}")
+                # Return the path relative to the project root, as a string
+                return str(potential_path.relative_to(self.project.root))
+
+        logger.warning(f"Could not find a matching source file for: {test_path_str}")
+        return None
 
     async def on_tick(self):
         """
@@ -82,6 +87,10 @@ class PlannerAgent(BaseAgent):
 
         test_file_path = nodeid.split("::")[0]
         inferred_source_path = self._infer_source_from_test(test_file_path)
+
+        if not inferred_source_path:
+            logger.error(f"Could not infer source path for test {nodeid}. Cannot create a fix task.")
+            return
 
         description = (
             f"Fix the bug in '{inferred_source_path}' so that the test "

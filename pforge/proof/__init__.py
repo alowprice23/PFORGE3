@@ -15,7 +15,7 @@ Modules:
 - backtest_cli: The user-facing command-line interface for the verifier.
 """
 
-from .bundle import ProofBundle, assemble_proof_bundle
+from .bundle import ProofBundle
 from .signatures import sign_hmac_sha256, verify_hmac_sha256
 from .capabilities import issue_token, verify_token, InvalidCapabilityError
 from .verifier import verify_proof_bundle, VerificationResult
@@ -23,7 +23,6 @@ from .redaction import scrub, RedactionReport
 
 __all__ = [
     "ProofBundle",
-    "assemble_proof_bundle",
     "sign_hmac_sha256",
     "verify_hmac_sha256",
     "issue_token",

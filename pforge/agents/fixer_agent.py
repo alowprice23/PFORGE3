@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import hashlib
 from typing import TYPE_CHECKING
 
 from .base_agent import BaseAgent
@@ -48,88 +49,121 @@ class FixerAgent(BaseAgent):
             logger.info("FixerAgent received a FixTask command.")
             await self._handle_fix_task(message.payload)
 
+    def _build_prompt(self, file_path: str, description: str, original_content: str, failed_fix_info: dict | None = None) -> str:
+        prompt = (
+            f"The file '{file_path}' has a bug.\n"
+            f"The bug is described as: {description}\n\n"
+            f"Here is the original content of the file:\n```python\n{original_content}\n```\n\n"
+        )
+
+        if failed_fix_info:
+            prompt += (
+                "A previous attempt to fix this bug failed. Here is the failed patch and the resulting error:\n"
+                f"Failed Patch:\n```python\n{failed_fix_info['content']}\n```\n"
+                f"Resulting Error:\n```\n{failed_fix_info['traceback']}\n```\n\n"
+            )
+
+        prompt += (
+            "Please provide the complete, corrected content of the file. "
+            "Only change the necessary code and adhere to the existing coding style. "
+            "Do not add any new public APIs. "
+            "Return only the raw file content, enclosed in a single ```python ... ``` block."
+        )
+        return prompt
+
     async def _handle_fix_task(self, payload: dict):
         file_path = payload['file_path']
         description = payload['description']
         failed_test_nodeid = payload.get('failed_test_nodeid')
 
         logger.info(f"[FixerLog] Attempting to fix file: {file_path}")
+
         try:
             original_content = self.project.read_file(file_path)
+            content_sha_before = hashlib.sha256(original_content.encode()).hexdigest()
         except FileNotFoundError:
             logger.error(f"[FixerLog] File not found: {file_path}. Cannot apply fix.")
             return
 
-        prompt = (
-            f"The file '{file_path}' has a bug.\n"
-            f"The bug is described as: {description}\n\n"
-            f"Here is the original content of the file:\n```\n{original_content}\n```\n\n"
-            f"Please provide the complete, corrected content of the file '{file_path}'. "
-            "Do not add any explanations or comments, only the raw file content, "
-            "enclosed in a single ```python ... ``` block."
-        )
+        prompt = self._build_prompt(file_path, description, original_content)
 
         logger.info("[FixerLog] Calling LLM...")
+        llm_response = ""
         try:
-            corrected_content = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
+            llm_response = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
         except Exception as e:
             logger.error(f"[FixerLog] LLM call failed: {e}")
-            return
-        logger.info("[FixerLog] LLM call complete.")
-        logger.info(f"[FixerLog] LLM response:\n---\n{corrected_content}\n---")
-
-        # Use regex to find the content within the first python markdown block
-        match = re.search(r"```python\n(.*?)\n```", corrected_content, re.DOTALL)
-        if match:
-            corrected_content = match.group(1).strip()
-        else:
-            logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
-
-        logger.info(f"[FixerLog] Applying potential fix to {file_path}")
-        try:
-            self.project.write_file(file_path, corrected_content)
-        except IOError as e:
-            logger.error(f"[FixerLog] Failed to write fix to {file_path}: {e}")
-            return
-        logger.info(f"[FixerLog] Applied potential fix to {file_path}")
-
-        logger.info(f"[FixerLog] Verifying fix by running test: {failed_test_nodeid}")
-        verification_result = run_tests(
-            test_nodes=[failed_test_nodeid] if failed_test_nodeid else [],
-            source_root=self.project.root
-        )
-        logger.info(f"[FixerLog] Verification complete. Result: {verification_result}")
-
-        fix_is_ok = verification_result is not None and verification_result.failed == 0
-
-        proof = ProofBundle(
-            tree_sha="dummy_sha",
-            venv_lock_sha="dummy_venv_lock_sha",
-            constraints=[ProofObligation(id="phi.sem.llm_fix_verified", ok=fix_is_ok)]
-        )
-
-        if fix_is_ok:
-            result_msg_type = MsgType.FIX_PATCH_APPLIED
-            result_payload = {"file_path": file_path}
-        else:
+            # Publish a rejection so the orchestrator can retry if needed
             result_msg_type = MsgType.FIX_PATCH_REJECTED
-            # Extract traceback for the planner
-            traceback = "No verification result."
-            if verification_result and verification_result.report_content:
-                # For now, just pass the whole report content.
-                # A more sophisticated approach would parse this to find the specific error.
-                traceback = verification_result.report_content
-
             result_payload = {
                 "file_path": file_path,
                 "description": description,
                 "failed_test_nodeid": failed_test_nodeid,
-                "traceback": traceback,
+                "traceback": f"LLM call failed: {e}",
             }
+            fix_is_ok = False
+            content_sha_after = content_sha_before
+            verification_result = None
+        else:
+            logger.info("[FixerLog] LLM call complete.")
 
+            match = re.search(r"```python\n(.*?)\n```", llm_response, re.DOTALL)
+            if match:
+                corrected_content = match.group(1).strip()
+            else:
+                logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
+                corrected_content = llm_response
+
+            try:
+                self.project.write_file(file_path, corrected_content)
+                content_sha_after = hashlib.sha256(corrected_content.encode()).hexdigest()
+            except IOError as e:
+                logger.error(f"[FixerLog] Failed to write fix to {file_path}: {e}")
+                return
+
+            test_file = failed_test_nodeid.split("::")[0] if failed_test_nodeid else None
+            logger.info(f"[FixerLog] Verifying fix by running tests in: {test_file or 'all tests'}")
+
+            verification_result = run_tests(
+                test_nodes=[test_file] if test_file else [],
+                source_root=self.project.root
+            )
+
+            fix_is_ok = verification_result is not None and verification_result.failed == 0
+
+            if fix_is_ok:
+                logger.info(f"[FixerLog] Fix successful for {file_path}")
+                result_msg_type = MsgType.FIX_PATCH_APPLIED
+                result_payload = {"file_path": file_path}
+            else:
+                logger.warning(f"[FixerLog] Fix failed for {file_path}")
+                traceback = "No verification result."
+                if verification_result and verification_result.report_content:
+                    traceback = verification_result.report_content
+
+                result_msg_type = MsgType.FIX_PATCH_REJECTED
+                result_payload = {
+                    "file_path": file_path,
+                    "description": description,
+                    "failed_test_nodeid": failed_test_nodeid,
+                    "traceback": traceback,
+                }
+                self.project.write_file(file_path, original_content)
+                content_sha_after = content_sha_before
+
+        proof = ProofBundle(
+            tree_sha="dummy_sha",
+            venv_lock_sha="dummy_venv_lock_sha",
+            constraints=[ProofObligation(id="phi.sem.llm_fix_verified", ok=fix_is_ok)],
+            tests=verification_result.to_dict() if verification_result else None,
+            file_path=file_path,
+            content_sha_before=content_sha_before,
+            content_sha_after=content_sha_after,
+            llm_prompt=prompt,
+            llm_response=llm_response,
+        )
         result_message = Message(type=result_msg_type, payload=result_payload)
         result_message.payload["proof"] = proof.model_dump()
 
         logger.info(f"[FixerLog] Publishing {result_msg_type.value} for {file_path}")
         await self.publish(result_msg_type.value, result_message)
-        logger.info(f"[FixerLog] Published {result_msg_type.value} for {file_path}")

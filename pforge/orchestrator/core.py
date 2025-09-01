@@ -21,15 +21,20 @@ class Orchestrator:
     runs their main loops, facilitating communication via an in-memory bus.
     """
 
-    def __init__(self, config: Config, project: Project):
+    def __init__(self, config: Config, project: Project, puzzle_id: str | None = None):
         self.config = config
         self.project = project
+        self.puzzle_id = puzzle_id
         self.bus = InMemoryBus()
         self.state_bus = StateBus(self.bus)
         self.agent_registry = AgentRegistry()
         self.agents: List[BaseAgent] = []
         self.retry_counts: Dict[str, int] = {}
+        self.completion_event = asyncio.Event()
+        self.success = False
+
         self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_REJECTED.value)
+        self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_APPLIED.value)
 
     def setup_agents(self):
         """
@@ -43,24 +48,31 @@ class Orchestrator:
             self.agents.append(agent_instance)
             logger.info("Instantiated agent: %s", name)
 
-    async def run(self):
-        """Starts the agent run loops and the message bus."""
+    async def run(self) -> bool:
+        """
+        Starts the agent run loops and the message bus.
+        Returns True if the puzzle is solved, False otherwise.
+        """
         logger.info("Orchestrator starting...")
         if not self.agents:
             logger.warning("No agents registered. Orchestrator will exit.")
-            return
+            return False
 
-        # Start the message bus
         bus_task = asyncio.create_task(self.bus.start(), name="InMemoryBus")
-        orchestrator_loop_task = asyncio.create_task(
-            self._message_loop(), name="OrchestratorLoop"
-        )
-
-        # Start all registered agents
+        orchestrator_loop_task = asyncio.create_task(self._message_loop(), name="OrchestratorLoop")
         agent_tasks = [asyncio.create_task(agent.run_loop()) for agent in self.agents]
 
+        # If a puzzle is defined, kick off the process by simulating a test failure.
+        if self.puzzle_id:
+            initial_message = Message(
+                type=MsgType.TESTS_FAILED,
+                payload={"failed_tests": [{"nodeid": self.puzzle_id, "traceback": "Initial puzzle"}]}
+            )
+            await self.bus.publish(MsgType.TESTS_FAILED.value, initial_message)
+
         try:
-            await asyncio.gather(bus_task, orchestrator_loop_task, *agent_tasks)
+            # Wait for the completion event to be set
+            await self.completion_event.wait()
         except asyncio.CancelledError:
             logger.info("Orchestrator run cancelled.")
         finally:
@@ -74,19 +86,30 @@ class Orchestrator:
             )
             logger.info("Orchestrator finished.")
 
+        return self.success
+
     async def _message_loop(self):
         """A loop for the orchestrator to process messages from the bus."""
-        while True:
+        while not self.completion_event.is_set():
             try:
                 message = await self.bus.get("orchestrator")
                 if message:
                     if message.type == MsgType.FIX_PATCH_REJECTED:
                         await self._handle_fix_patch_rejected(message.payload)
-                await asyncio.sleep(0.1)  # Prevent busy-waiting
+                    elif message.type == MsgType.FIX_PATCH_APPLIED:
+                        await self._handle_fix_patch_applied(message.payload)
+                await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in orchestrator message loop: {e}")
+
+    async def _handle_fix_patch_applied(self, payload: Dict):
+        """Handles a successful patch, declaring the puzzle solved."""
+        file_path = payload.get("file_path")
+        logger.info(f"Successfully applied patch to {file_path}. Puzzle solved!")
+        self.success = True
+        self.completion_event.set()
 
     async def _handle_fix_patch_rejected(self, payload: Dict):
         """Handles a rejected patch, implementing the retry logic."""
@@ -103,13 +126,14 @@ class Orchestrator:
             logger.info(
                 f"Retry {current_retry_count + 1}/{retry_limit} for bug in {file_path}."
             )
-
             fix_failed_message = Message(type=MsgType.FIX_FAILED, payload=payload)
             await self.bus.publish(MsgType.FIX_FAILED.value, fix_failed_message)
         else:
             logger.error(
                 f"Could not fix bug in {file_path} after {retry_limit} attempts. Giving up."
             )
+            self.success = False
+            self.completion_event.set()
 
     async def single_tick_update(self):
         """

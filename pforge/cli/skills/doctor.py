@@ -14,10 +14,13 @@ app = typer.Typer(
 
 logger = logging.getLogger(__name__)
 
-async def run_doctor_flow(project_path: Path):
+async def run_doctor_flow(project_path: Path, test_node_id: str | None = None):
     """Sets up and runs the orchestrator for the doctor command."""
 
-    typer.echo(f"🩺 Starting pForge Doctor on: {project_path}")
+    if test_node_id:
+        typer.echo(f"🩺 Starting pForge Doctor on: {project_path} to fix test: {test_node_id}")
+    else:
+        typer.echo(f"🩺 Starting pForge Doctor on: {project_path}")
 
     try:
         config = Config.load()
@@ -28,16 +31,17 @@ async def run_doctor_flow(project_path: Path):
 
     project = Project(project_path)
 
-    orchestrator = Orchestrator(config, project)
+    orchestrator = Orchestrator(config, project, puzzle_id=test_node_id)
     orchestrator.setup_agents()
 
-    # In a real scenario, the orchestrator might run indefinitely or until a
-    # specific condition is met. For this CLI command, we might run it for a
-    # fixed duration, for a single loop, or until a fix is found.
-    # Here, we'll just run it and let the user stop with Ctrl+C.
-    await orchestrator.run()
+    # The orchestrator will now run until the puzzle is solved or it fails.
+    success = await orchestrator.run()
 
-    typer.echo("✅ Doctor workflow complete.")
+    if success:
+        typer.echo("✅ Doctor workflow complete: Puzzle solved!")
+    else:
+        typer.echo("❌ Doctor workflow failed: Could not solve the puzzle.")
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -48,13 +52,19 @@ def run(
         exists=True,
         file_okay=False,
         resolve_path=True,
+    ),
+    test_node_id: str = typer.Option(
+        None,
+        "--test-node-id",
+        "-t",
+        help="The specific test node ID to target for fixing.",
     )
 ):
     """
     Analyzes a project, proposes a fix for a bug, and applies it.
     """
     try:
-        asyncio.run(run_doctor_flow(project_path))
+        asyncio.run(run_doctor_flow(project_path, test_node_id))
     except KeyboardInterrupt:
         typer.echo("\nGracefully shutting down pForge Doctor...")
     except Exception as e:

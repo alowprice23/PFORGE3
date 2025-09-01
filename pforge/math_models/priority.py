@@ -1,27 +1,36 @@
 from __future__ import annotations
 from typing import Dict
 
-def compute_task_priority(context: Dict[str, float]) -> float:
+def compute_task_priority(payload: Dict) -> float:
     """
-    Calculates the priority of a fix task based on a formula.
-    P = (Impact * Frequency) / (Effort * Risk)
+    Calculates the priority of a fix task based on a simplified formula.
+    P = Impact / Effort
 
-    This is a placeholder implementation. A real implementation would
-    derive these values from the EfficiencyAnalyst and Predictor agents.
+    - Impact is high for failing tests.
+    - Effort is estimated from the length of the traceback.
+    - Frequency and Risk are currently omitted for simplicity.
 
     Args:
-        context: A dictionary containing metrics about the task.
+        payload: The payload of the TESTS_FAILED message.
 
     Returns:
-        The calculated priority score.
+        The calculated priority score, normalized between 0 and 1.
     """
-    impact = context.get("impact", 8.0)
-    frequency = context.get("frequency", 5.0)
-    effort = context.get("effort", 4.0)
-    risk = context.get("risk", 3.0)
+    # Simplified Impact: Failing tests are high impact.
+    impact = 1.0
 
-    # Add a small epsilon to avoid division by zero
-    denominator = (effort * risk) + 1e-6
+    # Simplified Effort: Estimate from traceback length.
+    # A longer traceback might indicate a more complex issue.
+    traceback = ""
+    if payload.get("failed_tests"):
+        traceback = payload["failed_tests"][0].get("traceback", "")
 
-    priority = (impact * frequency) / denominator
-    return priority
+    # Normalize effort: 1.0 for no traceback, increasing with length.
+    # We add 1 to avoid division by zero and to represent a baseline effort.
+    effort = 1.0 + len(traceback) / 1000.0
+
+    # Simplified formula: Priority = Impact / Effort
+    priority = impact / effort
+
+    # Clamp the priority to a [0, 1] range.
+    return max(0.0, min(1.0, priority))

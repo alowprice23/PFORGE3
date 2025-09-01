@@ -25,7 +25,7 @@ def e2e_project():
         (source_dir / "__init__.py").touch()
         (source_dir / "buggy.py").write_text("def my_buggy_function():\n    return 1\n")
 
-        tests_dir = project_dir / "pforge" / "tests"
+        tests_dir = project_dir / "tests"
         tests_dir.mkdir()
         (tests_dir / "__init__.py").touch()
         (tests_dir / "test_buggy.py").write_text(
@@ -65,10 +65,10 @@ async def test_live_e2e_full_loop(e2e_project):
     orchestrator = Orchestrator(config, project)
     orchestrator.setup_agents()
 
-    # We will listen for the final TESTS_PASSED signal
+    # We will listen for the final FIX_PATCH_APPLIED signal
     bus = orchestrator.bus
     test_subscriber = "e2e_test_listener"
-    bus.subscribe(test_subscriber, MsgType.TESTS_PASSED.value)
+    bus.subscribe(test_subscriber, MsgType.FIX_PATCH_APPLIED.value)
 
     # --- Run the Orchestrator ---
     orchestrator_task = asyncio.create_task(orchestrator.run())
@@ -96,10 +96,10 @@ async def test_live_e2e_full_loop(e2e_project):
 
     # --- Wait for the outcome ---
     try:
-        # Wait for the TESTS_PASSED message that signals a successful fix
+        # Wait for the FIX_PATCH_APPLIED message that signals a successful fix
         final_message = await bus.get(test_subscriber, timeout=20.0)
         assert final_message is not None
-        assert final_message.type == MsgType.TESTS_PASSED
+        assert final_message.type == MsgType.FIX_PATCH_APPLIED
     except asyncio.TimeoutError:
         pytest.fail("Test timed out waiting for a fix to be applied and verified.")
     finally:

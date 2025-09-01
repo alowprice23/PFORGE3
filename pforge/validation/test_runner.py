@@ -22,11 +22,14 @@ class TestRunnerResult(NamedTuple):
     report_content: str
     command: List[str]
 
+    def to_dict(self) -> dict:
+        return self._asdict()
+
 def run_tests(
     test_nodes: List[str],
     source_root: Path,
     report_dir: Path = Path("pforge/var/test_reports")
-) -> Optional[TestRunResult]:
+) -> Optional[TestRunnerResult]:
     """
     Runs a set of specified tests using pytest.
 

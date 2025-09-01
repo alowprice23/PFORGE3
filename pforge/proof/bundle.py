@@ -38,35 +38,9 @@ class ProofBundle(BaseModel):
     # This is only set to True on the final proof of a successful run.
     qed: bool = Field(default=False, description="The 'Quod Erat Demonstrandum' flag, marking a final, verified success.")
 
-
-def assemble_proof_bundle(
-    tree_sha: str,
-    venv_lock_sha: str,
-    constraints: List[ProofObligation],
-    test_results: Optional[Dict[str, Any]] = None,
-    metrics_snapshot: Optional[Dict[str, Any]] = None,
-    plan_details: Optional[Dict[str, Any]] = None,
-    effort_metrics: Optional[Dict[str, Any]] = None,
-    is_qed: bool = False
-) -> ProofBundle:
-    """
-    A builder function to construct a valid ProofBundle from various evidence sources.
-
-    This function ensures that a bundle is created in a consistent and validated manner.
-    """
-
-    # In a real implementation, we might add more validation here to ensure
-    # that the inputs are well-formed before creating the bundle.
-
-    bundle = ProofBundle(
-        tree_sha=tree_sha,
-        venv_lock_sha=venv_lock_sha,
-        constraints=constraints,
-        tests=test_results,
-        metrics=metrics_snapshot,
-        planner=plan_details,
-        effort=effort_metrics,
-        qed=is_qed
-    )
-
-    return bundle
+    # --- FixerAgent specific fields ---
+    file_path: Optional[str] = Field(None, description="The path to the file that was modified.")
+    content_sha_before: Optional[str] = Field(None, description="The SHA256 hash of the file content before the fix.")
+    content_sha_after: Optional[str] = Field(None, description="The SHA256 hash of the file content after the fix.")
+    llm_prompt: Optional[str] = Field(None, description="The prompt sent to the LLM.")
+    llm_response: Optional[str] = Field(None, description="The response received from the LLM.")
