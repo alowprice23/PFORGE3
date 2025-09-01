@@ -1,18 +1,21 @@
-# pforge/math_models/entropy.py
-"""
-This module contains the functions to calculate the entropy of the system.
-Entropy is a measure of disorder and is used to guide the agents in their
-decision making process.
-"""
+from __future__ import annotations
+import math
 
-def style_entropy(style_vectors):
-    """Calculates the style entropy of the system."""
-    pass
+def calculate_entropy(num_failed: int, num_passed: int) -> float:
+    """
+    Calculates the Shannon entropy of the test results.
+    """
+    total = num_failed + num_passed
+    if total == 0:
+        return 0.0
 
-def structural_entropy(dep_graph):
-    """Calculates the structural entropy of the system."""
-    pass
+    p_fail = num_failed / total
+    p_pass = num_passed / total
 
-def process_entropy(pass_rates, log_noise):
-    """Calculates the process entropy of the system."""
-    pass
+    entropy = 0.0
+    if p_fail > 0:
+        entropy -= p_fail * math.log2(p_fail)
+    if p_pass > 0:
+        entropy -= p_pass * math.log2(p_pass)
+
+    return entropy

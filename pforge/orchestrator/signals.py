@@ -13,6 +13,9 @@ class MsgType(str, Enum):
     PREDICTIONS_MADE = "predictions.made"
     MISFIT_DETECTED = "misfit.detected"
     FALSE_PIECE_DETECTED = "false_piece.detected"
+    METRICS_UPDATED = "metrics.updated"
+    SPEC_CHECKED = "spec.checked"
+    CONFLICT_FOUND = "conflict.found"
 
 @dataclass
 class Message:

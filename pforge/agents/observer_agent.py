@@ -6,6 +6,8 @@ from pathlib import Path
 from .base_agent import BaseAgent
 from pforge.validation.test_runner import run_tests
 from pforge.orchestrator.signals import MsgType, Message
+from pforge.math_models.entropy import calculate_entropy
+from pforge.math_models.efficiency import compute_intelligent_efficiency
 
 class ObserverAgent(BaseAgent):
     """
@@ -31,6 +33,22 @@ class ObserverAgent(BaseAgent):
         if test_result is None:
             self.logger.error("Test runner failed to produce a result.")
             return
+
+        # Calculate metrics
+        entropy = calculate_entropy(test_result.failed, test_result.passed)
+        # Efficiency calculation requires a state object, which we don't have here.
+        # We will pass a simplified state for now.
+        efficiency = compute_intelligent_efficiency({"gaps": test_result.failed}, {})
+
+        metrics_message = Message(
+            type=MsgType.METRICS_UPDATED,
+            payload={
+                "entropy": entropy,
+                "efficiency": efficiency,
+            }
+        )
+        await self.publish(MsgType.METRICS_UPDATED.value, metrics_message)
+        self.logger.info(f"Published METRICS_UPDATED event with entropy={entropy:.4f} and efficiency={efficiency:.4f}")
 
         if test_result.failed > 0:
             self.logger.info(f"Test suite failed with {test_result.failed} failures.")

@@ -32,9 +32,12 @@ class Orchestrator:
         self.retry_counts: Dict[str, int] = {}
         self.completion_event = asyncio.Event()
         self.success = False
+        self.last_applied_patch = None
 
         self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_REJECTED.value)
         self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_APPLIED.value)
+        self.bus.subscribe("orchestrator", MsgType.SPEC_CHECKED.value)
+        self.bus.subscribe("orchestrator", MsgType.CONFLICT_FOUND.value)
 
     def setup_agents(self):
         """
@@ -98,6 +101,11 @@ class Orchestrator:
                         await self._handle_fix_patch_rejected(message.payload)
                     elif message.type == MsgType.FIX_PATCH_APPLIED:
                         await self._handle_fix_patch_applied(message.payload)
+                    elif message.type == MsgType.SPEC_CHECKED:
+                        await self._handle_spec_checked(message.payload)
+                    elif message.type == MsgType.CONFLICT_FOUND:
+                        # For now, the orchestrator just logs this. The BacktrackerAgent will handle it.
+                        logger.warning(f"Orchestrator received CONFLICT_FOUND for {message.payload.get('file_path')}")
                 await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 break
@@ -105,11 +113,26 @@ class Orchestrator:
                 logger.error(f"Error in orchestrator message loop: {e}")
 
     async def _handle_fix_patch_applied(self, payload: Dict):
-        """Handles a successful patch, declaring the puzzle solved."""
+        """Handles a successful patch, and waits for spec check."""
         file_path = payload.get("file_path")
-        logger.info(f"Successfully applied patch to {file_path}. Puzzle solved!")
-        self.success = True
-        self.completion_event.set()
+        logger.info(f"Successfully applied patch to {file_path}. Waiting for spec check...")
+        self.last_applied_patch = payload
+
+    async def _handle_spec_checked(self, payload: Dict):
+        """Handles a spec check result, declaring the puzzle solved if successful."""
+        file_path = payload.get("file_path")
+        is_valid = payload.get("is_valid")
+
+        if self.last_applied_patch and self.last_applied_patch.get("file_path") == file_path:
+            if is_valid:
+                logger.info(f"Spec check passed for {file_path}. Puzzle solved!")
+                self.success = True
+                self.completion_event.set()
+            else:
+                logger.warning(f"Spec check failed for {file_path}. The change will be reverted.")
+                # The backtracker will handle the revert, but we should reset our state.
+                self.last_applied_patch = None
+
 
     async def _handle_fix_patch_rejected(self, payload: Dict):
         """Handles a rejected patch, implementing the retry logic."""
