@@ -24,3 +24,6 @@ anthropic
 google-generativeai
 typer[all]
 structlog
+fakeredis[aioredis]
+python-multipart
+pytest-json-report

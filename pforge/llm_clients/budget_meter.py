@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from redis.asyncio import Redis
+import fakeredis.aioredis
 
 class BudgetExceededError(Exception):
     """Raised when an operation would exceed the allocated token budget."""
@@ -15,7 +15,7 @@ class BudgetMeter:
     """
     STREAM_PREFIX = "pforge:budget:"
 
-    def __init__(self, tenant: str, daily_quota_tokens: int, redis_client: Redis):
+    def __init__(self, tenant: str, daily_quota_tokens: int, redis_client: fakeredis.aioredis.FakeRedis):
         if not redis_client:
             raise ValueError("A Redis client instance is required.")
         self.tenant = tenant
@@ -57,7 +57,7 @@ class BudgetMeter:
 
                 await pipe.execute()
                 return True
-            except self.redis.exceptions.WatchError:
+            except Exception:
                 # The key was modified by another client after we WATCHed it.
                 # In a high-concurrency scenario, we might retry here.
                 # For our local agent model, this is unlikely to happen.

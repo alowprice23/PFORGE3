@@ -42,7 +42,10 @@ dependencies = [
     "anthropic",
     "google-generativeai",
     "typer[all]",
-    "structlog"
+    "structlog",
+    "fakeredis[aioredis]",
+    "python-multipart",
+    "pytest-json-report"
 ]
 
 [project.urls]

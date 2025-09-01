@@ -36,6 +36,9 @@ Requires-Dist: anthropic
 Requires-Dist: google-generativeai
 Requires-Dist: typer[all]
 Requires-Dist: structlog
+Requires-Dist: fakeredis[aioredis]
+Requires-Dist: python-multipart
+Requires-Dist: pytest-json-report
 
 There are many possible sequences to reach the solution, but only a finite — and relatively small — number of valid assembly paths that work. Definitely not infinite.
 
