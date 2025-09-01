@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pforge
+  namespace: pforge
+spec:
+  type: ClusterIP
+  selector: { app: orchestrator }
+  ports:
+    - name: api
+      port: 80
+      targetPort: 8000
+    - name: ui
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: pforge
+spec:
+  type: ClusterIP
+  selector: { app: redis }
+  ports:
+    - port: 6379

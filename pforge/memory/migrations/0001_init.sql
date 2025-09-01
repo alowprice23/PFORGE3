@@ -1,0 +1,1 @@
+-- This file contains the initial schema for the memory database.

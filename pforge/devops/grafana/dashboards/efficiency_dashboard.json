@@ -1,0 +1,24 @@
+{
+  "title": "pForge Efficiency",
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "gauge",
+      "title": "Puzzle Efficiency",
+      "targets": [
+        { "expr": "pforge_efficiency", "legendFormat": "{{instance}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "max": 2, "min": 0 } }
+    },
+    {
+      "type": "graph",
+      "title": "Entropy vs Efficiency",
+      "targets": [
+        { "expr": "pforge_entropy", "legendFormat": "entropy" },
+        { "expr": "pforge_efficiency", "legendFormat": "efficiency" }
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1
+}

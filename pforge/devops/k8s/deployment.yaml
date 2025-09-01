@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pforge-orchestrator
+  namespace: pforge
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: orchestrator }
+  template:
+    metadata:
+      labels: { app: orchestrator }
+    spec:
+      containers:
+        - name: orchestrator
+          image: ghcr.io/your-org/pforge-orchestrator:latest
+          ports: [{ containerPort: 8000 }]
+          env:
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: NEO4J_URI
+              value: "bolt://neo4j:7687"
+            - name: POSTGRES_URI
+              value: "postgresql://pforge:pforgepass@postgres:5432/pforge"
+          resources:
+            limits:   { cpu: "500m", memory: "1Gi" }
+            requests: { cpu: "250m", memory: "512Mi" }
+        - name: ui
+          image: ghcr.io/your-org/pforge-ui:latest
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: pforge
+spec:
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          ports: [{ containerPort: 6379 }]
