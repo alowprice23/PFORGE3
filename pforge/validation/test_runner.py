@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, NamedTuple, Optional
 import hashlib
 import uuid
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ def run_tests(
     report_path = (report_dir / f"report-{uuid.uuid4()}.json").resolve()
 
     command = [
-        "python",
+        sys.executable,
         "-m",
         "pytest",
         "--json-report",

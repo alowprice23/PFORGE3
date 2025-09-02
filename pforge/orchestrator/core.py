@@ -10,6 +10,7 @@ from pforge.orchestrator.agent_registry import AgentRegistry
 from pforge.orchestrator.signals import MsgType, Message
 from pforge.orchestrator.state_bus import StateBus, PuzzleState
 from pforge.project import Project
+from pforge.sandbox import PatchManager
 from pforge.math_models.efficiency import compute_intelligent_efficiency
 
 logger = logging.getLogger("pforge.orchestrator")
@@ -27,6 +28,7 @@ class Orchestrator:
         self.puzzle_id = puzzle_id
         self.bus = InMemoryBus()
         self.state_bus = StateBus(self.bus)
+        self.patch_manager = PatchManager(project.root)
         self.agent_registry = AgentRegistry()
         self.agents: List[BaseAgent] = []
         self.retry_counts: Dict[str, int] = {}
@@ -34,7 +36,7 @@ class Orchestrator:
         self.success = False
         self.last_applied_patch = None
 
-        self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_REJECTED.value)
+        self.bus.subscribe("orchestrator", MsgType.MISFIT_DETECTED.value)
         self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_APPLIED.value)
         self.bus.subscribe("orchestrator", MsgType.SPEC_CHECKED.value)
         self.bus.subscribe("orchestrator", MsgType.CONFLICT_FOUND.value)
@@ -46,7 +48,10 @@ class Orchestrator:
         for name, agent_class in self.agent_registry.agents.items():
             # Pass config and project to each agent
             agent_instance = agent_class(
-                bus=self.bus, config=self.config, project=self.project
+                bus=self.bus,
+                config=self.config,
+                project=self.project,
+                patch_manager=self.patch_manager,
             )
             self.agents.append(agent_instance)
             logger.info("Instantiated agent: %s", name)
@@ -97,8 +102,8 @@ class Orchestrator:
             try:
                 message = await self.bus.get("orchestrator")
                 if message:
-                    if message.type == MsgType.FIX_PATCH_REJECTED:
-                        await self._handle_fix_patch_rejected(message.payload)
+                    if message.type == MsgType.MISFIT_DETECTED:
+                        await self._handle_misfit_detected(message.payload)
                     elif message.type == MsgType.FIX_PATCH_APPLIED:
                         await self._handle_fix_patch_applied(message.payload)
                     elif message.type == MsgType.SPEC_CHECKED:
@@ -115,8 +120,26 @@ class Orchestrator:
     async def _handle_fix_patch_applied(self, payload: Dict):
         """Handles a successful patch, and waits for spec check."""
         file_path = payload.get("file_path")
-        logger.info(f"Successfully applied patch to {file_path}. Waiting for spec check...")
-        self.last_applied_patch = payload
+        patch = payload.get("patch")
+        churn = payload.get("churn", 0)
+
+        if not patch:
+            logger.error("FIX_PATCH_APPLIED message received without a patch.")
+            return
+
+        logger.info(f"Applying patch to {file_path} with churn {churn}...")
+        if self.patch_manager.apply_patch(patch, file_path):
+            self.last_applied_patch = payload
+            state = self.state_bus.get_snapshot()
+            state.code_churn += churn
+            await self.state_bus.publish_update(state)
+            logger.info(f"Patch for {file_path} applied. Waiting for spec check.")
+        else:
+            logger.error(f"Failed to apply patch to {file_path}. This should not happen.")
+            # If applying the patch fails, we should probably backtrack.
+            # For now, we just log the error.
+            self.success = False
+            self.completion_event.set()
 
     async def _handle_spec_checked(self, payload: Dict):
         """Handles a spec check result, declaring the puzzle solved if successful."""
@@ -129,20 +152,32 @@ class Orchestrator:
                 self.success = True
                 self.completion_event.set()
             else:
-                logger.warning(f"Spec check failed for {file_path}. The change will be reverted.")
-                # The backtracker will handle the revert, but we should reset our state.
+                logger.warning(f"Spec check failed for {file_path}. Publishing VERIFICATION_FAILED.")
+                verification_failed_message = Message(
+                    type=MsgType.VERIFICATION_FAILED,
+                    payload=self.last_applied_patch,
+                )
+                # It's fire-and-forget; the BacktrackerAgent will handle the rest.
+                asyncio.create_task(
+                    self.bus.publish(MsgType.VERIFICATION_FAILED.value, verification_failed_message)
+                )
                 self.last_applied_patch = None
 
 
-    async def _handle_fix_patch_rejected(self, payload: Dict):
-        """Handles a rejected patch, implementing the retry logic."""
+    async def _handle_misfit_detected(self, payload: Dict):
+        """Handles a detected misfit, implementing the retry logic."""
         file_path = payload.get("file_path")
         if not file_path:
-            logger.warning("FIX_PATCH_REJECTED message received without a file_path.")
+            logger.warning("MISFIT_DETECTED message received without a file_path.")
             return
 
         current_retry_count = self.retry_counts.get(file_path, 0)
         retry_limit = self.config.doctor.retry_limit
+
+        churn = payload.get("churn", 0)
+        state = self.state_bus.get_snapshot()
+        state.code_churn += churn
+        await self.state_bus.publish_update(state)
 
         if current_retry_count < retry_limit:
             self.retry_counts[file_path] = current_retry_count + 1

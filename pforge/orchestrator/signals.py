@@ -10,12 +10,16 @@ class MsgType(str, Enum):
     FIX_PATCH_APPLIED = "patch.applied"
     FIX_PATCH_REJECTED = "patch.rejected"
     FIX_FAILED = "fix.failed"
-    PREDICTIONS_MADE = "predictions.made"
+    PREDICTION_MADE = "prediction.made"
     MISFIT_DETECTED = "misfit.detected"
     FALSE_PIECE_DETECTED = "false_piece.detected"
     METRICS_UPDATED = "metrics.updated"
     SPEC_CHECKED = "spec.checked"
     CONFLICT_FOUND = "conflict.found"
+    # Emitted by the Orchestrator when a patch is applied but fails verification
+    VERIFICATION_FAILED = "verification.failed"
+    # Emitted by the FixerAgent when a patch is ready for prediction
+    PROPOSED_PATCH = "patch.proposed"
 
 @dataclass
 class Message:

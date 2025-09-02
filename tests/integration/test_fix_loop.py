@@ -69,6 +69,13 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     orchestrator = Orchestrator(config, project)
     orchestrator.setup_agents()
 
+    # Mock the predictor agent to always return high confidence
+    predictor_agent = next((a for a in orchestrator.agents if a.name == "predictor"), None)
+    assert predictor_agent is not None
+    mock_predictor_llm = AsyncMock()
+    mock_predictor_llm.chat.return_value = orjson.dumps({"confidence": 1.0})
+    predictor_agent.llm_client = mock_predictor_llm
+
     # We will listen for the final FIX_PATCH_APPLIED signal
     bus = orchestrator.bus
     test_subscriber = "e2e_test_listener"

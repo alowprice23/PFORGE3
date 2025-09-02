@@ -26,6 +26,7 @@ from .fs_manager import (
 from .diff_utils import diff_snapshots, format_diff_for_display
 from .merge_back import execute_merge, MergeResult
 from .path_policy import is_path_safe
+from .patch_manager import PatchManager
 
 __all__ = [
     "onboard_repo",
@@ -38,4 +39,5 @@ __all__ = [
     "execute_merge",
     "MergeResult",
     "is_path_safe",
+    "PatchManager",
 ]

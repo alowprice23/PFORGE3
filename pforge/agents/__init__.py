@@ -14,39 +14,36 @@ Modules:
 """
 
 from .base_agent import BaseAgent
-from .observer_agent import ObserverAgent
-from .spec_oracle_agent import SpecOracleAgent
+from .observer import ObserverAgent
 from .planner_agent import PlannerAgent
 from .fixer_agent import FixerAgent
+from .backtracker_agent import BacktrackerAgent
 from .predictor_agent import PredictorAgent
 from .misfit_agent import MisfitAgent
 from .false_piece_agent import FalsePieceAgent
-from .backtracker_agent import BacktrackerAgent
 from .summarizer_agent import SummarizerAgent
 
 # A dictionary to make all agent classes easily accessible for registration.
 AGENT_CLASSES = {
     "observer": ObserverAgent,
-    "spec_oracle": SpecOracleAgent,
     "planner": PlannerAgent,
     "fixer": FixerAgent,
+    "backtracker": BacktrackerAgent,
     "predictor": PredictorAgent,
     "misfit": MisfitAgent,
     "false_piece": FalsePieceAgent,
-    "backtracker": BacktrackerAgent,
     "summarizer": SummarizerAgent,
 }
 
 __all__ = [
     "BaseAgent",
     "ObserverAgent",
-    "SpecOracleAgent",
     "PlannerAgent",
     "FixerAgent",
+    "BacktrackerAgent",
     "PredictorAgent",
     "MisfitAgent",
     "FalsePieceAgent",
-    "BacktrackerAgent",
     "SummarizerAgent",
     "AGENT_CLASSES",
 ]

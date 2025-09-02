@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class SummarizerAgent(BaseAgent):
     name = "summarizer_agent"
 
-    def __init__(self, bus: InMemoryBus, *args, **kwargs):
-        super().__init__(bus, *args, **kwargs)
+    def __init__(self, bus: InMemoryBus, config, project, patch_manager=None):
+        super().__init__(bus, config, project, patch_manager)
         # In a real system, the budget meter would be shared.
         budget_meter = BudgetMeter(
             tenant="pforge-dev",

@@ -1,10 +1,7 @@
 from __future__ import annotations
 import logging
 import os
-import re
-import orjson
-from typing import TYPE_CHECKING
-from pathlib import Path
+from typing import TYPE_CHECKING, Dict
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -12,21 +9,24 @@ from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 
 if TYPE_CHECKING:
+    from pforge.config import Config
     from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.project import Project
 
 logger = logging.getLogger(__name__)
 
 class MisfitAgent(BaseAgent):
     """
-    Detects code that is semantically misplaced (e.g., a utility function
-    in a data model file).
+    Analyzes a patch that failed tests to determine the likely cause of the
+    failure, providing a more intelligent analysis than just a raw traceback.
     """
     name = "misfit"
-    tick_interval: float = 2.0
+    tick_interval: float = 1.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
-        super().__init__(bus, config, project)
-        self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, patch_manager=None):
+        super().__init__(bus, config, project, patch_manager)
+        # We listen for rejected patches to analyze them.
+        self.bus.subscribe(self.name, MsgType.FIX_PATCH_REJECTED.value)
 
         budget_meter = BudgetMeter(
             tenant="pforge-dev",
@@ -38,66 +38,62 @@ class MisfitAgent(BaseAgent):
             budget_meter=budget_meter
         )
 
-    def _extract_symbols(self, file_content: str) -> list[str]:
-        """A simple regex-based parser to find function and class names."""
-        # This is a naive implementation; a real one would use an AST parser.
-        return re.findall(r"^(?:def|class)\s+([a-zA-Z0-9_]+)", file_content, re.MULTILINE)
-
     async def on_tick(self):
-        # Temporarily disabled to allow e2e tests to pass.
-        # This agent needs to be made more robust against non-JSON LLM responses.
-        pass
-        # message = await self.bus.get(self.name, timeout=0.1)
-        # if not message or message.type != MsgType.FIX_PATCH_APPLIED:
-        #     return
+        message = await self.bus.get(self.name)
+        if not message:
+            return
 
-        # file_path_str = message.payload.get("file_path")
-        # if not file_path_str:
-        #     return
+        if message.type == MsgType.FIX_PATCH_REJECTED:
+            logger.info("MisfitAgent received a FixPatchRejected command.")
+            await self._analyze_failure(message.payload)
 
-        # logger.info(f"MisfitAgent checking for misfits in {file_path_str}")
-
-        # try:
-        #     full_path = self.project.root / file_path_str
-        #     if not full_path.exists():
-        #         logger.warning(f"MisfitAgent could not find file to check: {full_path}")
-        #         return
-        #     content = full_path.read_text()
-        #     symbols = self._extract_symbols(content)
-        # except Exception as e:
-        #     logger.error(f"MisfitAgent could not read or parse {file_path_str}: {e}")
-        #     return
-
-        # for symbol in symbols:
-        #     await self._check_symbol_placement(file_path_str, symbol)
-
-    async def _check_symbol_placement(self, file_path: str, symbol: str):
-        prompt = (
-            f"You are a code architecture reviewer. The function or class '{symbol}' "
-            f"is located in the file '{file_path}'.\n\n"
-            "Based on standard software engineering principles (e.g., separation of concerns, "
-            "high cohesion), does this symbol semantically belong in this file?\n\n"
-            "Respond with a single JSON object with two keys:\n"
-            '1. "misfit": boolean (true if it is a misfit, false otherwise)\n'
-            '2. "suggestion": string (if a misfit, suggest a better file path, e.g., "pforge/utils/helpers.py"; otherwise null)'
+    def _build_analysis_prompt(self, patch: str, traceback: str) -> str:
+        """Builds the prompt for the LLM to analyze the failure."""
+        return (
+            "You are a senior software engineer performing a code review. "
+            "A junior developer submitted a patch to fix a bug, but the patch caused the tests to fail.\n\n"
+            "Here is the patch that was submitted:\n"
+            "```diff\n"
+            f"{patch}\n"
+            "```\n\n"
+            "Here is the traceback from the test failure:\n"
+            "```\n"
+            f"{traceback}\n"
+            "```\n\n"
+            "Please provide a concise, one-sentence explanation of the likely root cause of the error. "
+            "Focus on the logical mistake in the patch. Do not suggest a fix."
         )
 
-        try:
-            response_text = await self.llm_client.chat([{"role": "user", "content": prompt}])
-            verdict = orjson.loads(response_text)
-            if verdict.get("misfit") is True:
-                suggestion = verdict.get("suggestion")
-                logger.warning(f"Misfit detected: '{symbol}' in '{file_path}'. Suggested path: {suggestion}")
+    async def _analyze_failure(self, payload: Dict):
+        """
+        Uses an LLM to analyze a failed patch and publishes the finding.
+        """
+        patch = payload.get("patch")
+        traceback = payload.get("traceback")
 
-                misfit_message = Message(
-                    type="misfit.detected", # New MsgType
-                    payload={
-                        "file_path": file_path,
-                        "symbol": symbol,
-                        "suggestion": suggestion,
-                    }
-                )
-                await self.publish("misfit.detected", misfit_message)
+        if not patch or not traceback:
+            logger.warning("MisfitAgent received a rejected patch message with missing patch or traceback.")
+            return
+
+        prompt = self._build_analysis_prompt(patch, traceback)
+
+        try:
+            logger.info("MisfitAgent calling LLM for failure analysis...")
+            explanation = await self.llm_client.chat([{"role": "user", "content": prompt}])
+            logger.info(f"MisfitAgent received analysis: {explanation}")
+
+            # Forward the original payload and add the new analysis.
+            misfit_payload = payload.copy()
+            misfit_payload["misfit_analysis"] = explanation
+
+            misfit_message = Message(
+                type=MsgType.MISFIT_DETECTED,
+                payload=misfit_payload,
+            )
+            await self.publish(MsgType.MISFIT_DETECTED.value, misfit_message)
+            logger.info("MisfitAgent published a MisfitDetected message.")
 
         except Exception as e:
-            logger.error(f"MisfitAgent LLM call or parsing failed for symbol '{symbol}': {e}")
+            logger.error(f"MisfitAgent failed during LLM call or processing: {e}")
+            # If analysis fails, we do nothing. The PlannerAgent's original
+            # retry logic will proceed without the extra analysis.

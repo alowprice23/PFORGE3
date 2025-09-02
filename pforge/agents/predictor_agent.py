@@ -2,97 +2,101 @@ from __future__ import annotations
 import logging
 import os
 import orjson
-from typing import TYPE_CHECKING, List, Dict
+from typing import TYPE_CHECKING, Dict
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
-from pforge.llm_clients.gemini_client import GeminiClient
+from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 
 if TYPE_CHECKING:
+    from pforge.config import Config
     from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.project import Project
 
 logger = logging.getLogger(__name__)
 
 class PredictorAgent(BaseAgent):
     """
-    Uses an LLM to predict code stubs or changes that could fix a
-    reported test failure or specification gap.
+    Uses an LLM to predict the likelihood that a proposed patch will
+    successfully fix a bug without introducing regressions.
     """
     name = "predictor"
     tick_interval: float = 1.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
-        super().__init__(bus, config, project)
-        self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, patch_manager=None):
+        super().__init__(bus, config, project, patch_manager)
+        self.bus.subscribe(self.name, MsgType.PROPOSED_PATCH.value)
 
-        # This would be injected in a real system
         budget_meter = BudgetMeter(
             tenant="pforge-dev",
             daily_quota_tokens=1_000_000,
             redis_client=self.bus.redis_client
         )
-        self.llm_client = GeminiClient(
-            api_key=os.getenv("GEMINI_API_KEY"),
+        self.llm_client = OpenAIClient(
+            api_key=os.getenv("OPENAI_API_KEY"),
             budget_meter=budget_meter
         )
-        self.code_manifest: List[str] = []
 
     async def on_tick(self):
-        """
-        Consumes test failures and spec gaps, then asks an LLM for predictions.
-        """
-        # First, check for a new file manifest to keep our context fresh
-        manifest_msg = await self.bus.get(f"{self.name}:manifest", timeout=0.1)
-        if manifest_msg and manifest_msg.type == "file_manifest":
-             self.code_manifest = manifest_msg.payload.get("files", [])
-
-        # Now, check for a failure to work on
-        failure_msg = await self.bus.get(self.name, timeout=0.1)
-        if not failure_msg or failure_msg.type != MsgType.TESTS_FAILED:
+        message = await self.bus.get(self.name)
+        if not message:
             return
 
-        logger.info("PredictorAgent consumed TESTS_FAILED event.")
-        await self._handle_failure(failure_msg.payload)
+        if message.type == MsgType.PROPOSED_PATCH:
+            logger.info("PredictorAgent received a ProposedPatch command.")
+            await self._predict_patch_success(message.payload)
 
-    def _build_prompt(self, failed_tests: List[Dict]) -> str:
-        """Builds a prompt for the Gemini model."""
-        # For now, just use the first failure
-        failure = failed_tests[0]
-        nodeid = failure.get("nodeid", "Unknown test")
-        traceback = failure.get("traceback", "No traceback provided.")
-
-        # A real prompt would be more sophisticated, using file content etc.
-        prompt = (
-            f"A test has failed: {nodeid}\n\n"
-            f"Traceback:\n{traceback}\n\n"
-            "Based on this failure, please provide a list of suggestions to fix the issue. "
-            "Each suggestion should be a JSON object with 'file_path', 'stub' (the code to add/change), "
-            "and 'confidence' (0.0-1.0).\n"
-            "Respond with only a valid JSON array of these objects."
+    def _build_prediction_prompt(self, patch: str, description: str) -> str:
+        """Builds the prompt for the LLM to predict patch success."""
+        return (
+            "You are a senior software engineer acting as an expert code reviewer. "
+            "Your task is to predict the success of a proposed code patch.\n\n"
+            "The original problem description is:\n"
+            f"'{description}'\n\n"
+            "Here is the patch that was generated to solve the problem:\n"
+            "```diff\n"
+            f"{patch}\n"
+            "```\n\n"
+            "Based on your expertise, estimate the confidence that this patch correctly solves the described problem "
+            "without introducing any new bugs or regressions. Provide only a single JSON object in the format "
+            '{"confidence": <value>}, where <value> is a float between 0.0 (no confidence) and 1.0 (absolute confidence).'
         )
-        return prompt
 
-    async def _handle_failure(self, payload: dict):
-        failed_tests = payload.get("failed_tests", [])
-        if not failed_tests:
-            return
+    async def _predict_patch_success(self, payload: Dict):
+        """
+        Uses an LLM to predict the success of a patch and publishes the prediction.
+        """
+        patch = payload.get("patch")
+        description = payload.get("description")
 
-        prompt = self._build_prompt(failed_tests)
+        if not patch:
+            logger.warning("PredictorAgent received a proposed patch message with no patch.")
+            # Default to low confidence if there's no patch to analyze
+            prediction_confidence = 0.0
+        else:
+            prompt = self._build_prediction_prompt(patch, description)
+            try:
+                logger.info("PredictorAgent calling LLM for success prediction...")
+                response_text = await self.llm_client.chat([{"role": "user", "content": prompt}])
+                verdict = orjson.loads(response_text)
+                prediction_confidence = float(verdict.get("confidence", 0.0))
+                logger.info(f"PredictorAgent received prediction. Confidence: {prediction_confidence}")
 
-        try:
-            response_text = await self.llm_client.chat(prompt)
-            suggestions = orjson.loads(response_text)
-            if not isinstance(suggestions, list):
-                logger.error("LLM did not return a list of suggestions.")
-                return
-        except Exception as e:
-            logger.error(f"Failed to get or parse prediction from LLM: {e}")
-            return
+            except (orjson.JSONDecodeError, TypeError, ValueError) as e:
+                logger.error(f"PredictorAgent failed to parse LLM response: {e}. Defaulting to low confidence.")
+                prediction_confidence = 0.1 # Default to low confidence on parse failure
+            except Exception as e:
+                logger.error(f"PredictorAgent failed during LLM call: {e}. Defaulting to low confidence.")
+                prediction_confidence = 0.1 # Default to low confidence on API failure
+
+        # Forward the original payload and add the new prediction.
+        prediction_payload = payload.copy()
+        prediction_payload["prediction_confidence"] = prediction_confidence
 
         prediction_message = Message(
-            type="predictions.made", # This will be a new MsgType
-            payload={"suggestions": suggestions}
+            type=MsgType.PREDICTION_MADE,
+            payload=prediction_payload,
         )
-        await self.publish("predictions.made", prediction_message)
-        logger.info(f"Published predictions with {len(suggestions)} suggestions.")
+        await self.publish(MsgType.PREDICTION_MADE.value, prediction_message)
+        logger.info("PredictorAgent published a PredictionMade message.")

@@ -20,8 +20,8 @@ class PlannerAgent(BaseAgent):
     name = "planner"
     tick_interval: float = 1.0  # Check for messages every second
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
-        super().__init__(bus, config, project)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, patch_manager=None):
+        super().__init__(bus, config, project, patch_manager)
         self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
         self.bus.subscribe(self.name, MsgType.FIX_FAILED.value)
 
@@ -120,13 +120,24 @@ class PlannerAgent(BaseAgent):
         file_path = payload.get("file_path")
         original_description = payload.get("description")
         traceback = payload.get("traceback")
+        patch = payload.get("patch")
+        misfit_analysis = payload.get("misfit_analysis")
 
         description = (
-            f"A previous attempt to fix the bug in '{file_path}' failed. "
-            f"The original problem was:\n{original_description}\n\n"
-            f"The previous fix failed with this error:\n{traceback}\n\n"
-            "Please analyze the previous mistake and provide a different solution."
+            f"A previous attempt to fix the bug in '{file_path}' failed.\n"
+            f"The original problem was: {original_description}\n\n"
+            f"The failed patch was:\n```diff\n{patch}\n```\n\n"
+            f"The patch failed with this error:\n```\n{traceback}\n```\n\n"
         )
+
+        if misfit_analysis:
+            description += (
+                "An AI assistant has analyzed the failure and provided this root cause analysis:\n"
+                f"'{misfit_analysis}'\n\n"
+            )
+
+        description += "Please analyze all the information and provide a new, corrected solution."
+
 
         # For now, we'll reuse the priority from the failed task payload if it exists.
         priority = payload.get("priority", 0.5)

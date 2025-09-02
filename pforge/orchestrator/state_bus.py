@@ -39,6 +39,9 @@ class PuzzleState:
     # Agent economy
     agent_utility_deltas: Dict[str, float] = field(default_factory=dict)
 
+    # Code metrics
+    code_churn: int = 0
+
 
 class StateBus:
     """

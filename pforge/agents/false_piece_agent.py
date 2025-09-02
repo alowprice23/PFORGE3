@@ -23,8 +23,8 @@ class FalsePieceAgent(BaseAgent):
     name = "false_piece"
     tick_interval: float = 30.0  # This is a heavy operation, run it infrequently
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
-        super().__init__(bus, config, project)
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, patch_manager=None):
+        super().__init__(bus, config, project, patch_manager)
         self.source_root = self.project.root
 
         budget_meter = BudgetMeter(

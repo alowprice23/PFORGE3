@@ -22,12 +22,13 @@ class BaseAgent(ABC):
     name: str = "base-agent"
     tick_interval: float = 1.0  # Default seconds between on_tick calls
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, patch_manager=None):
         if not bus:
             raise ValueError("A message bus instance is required.")
         self.bus = bus
         self.config = config
         self.project = project
+        self.patch_manager = patch_manager
         self.logger = logging.getLogger(f"pforge.agent.{self.name}")
         self._is_running = False
 
