@@ -4,12 +4,15 @@ import time
 from typing import Dict, Any, List
 import uuid
 
+import redis
+
 from .signatures import sign_hmac_sha256, verify_hmac_sha256
 
-# In a real system, the nonce store would be persistent (e.g., Redis or SQLite)
-# to prevent replay attacks across restarts. For the foundational core, an
-# in-memory set is sufficient to demonstrate the concept.
-_USED_NONCES = set()
+# Nonces are stored in a Redis set for persistence across restarts.
+# The key is fixed, but in a multi-tenant system, it might be derived
+# from the tenant ID.
+NONCE_SET_KEY = "pforge:capability_nonces"
+
 
 class InvalidCapabilityError(Exception):
     """Raised when a capability token is invalid, expired, or replayed."""
@@ -58,7 +61,7 @@ def issue_token(
     token = f"{payload_json.decode('utf-8')}.{signature}"
     return token
 
-def verify_token(token: str) -> Dict[str, Any]:
+async def verify_token(token: str, redis_client: redis.Redis) -> Dict[str, Any]:
     """
     Verifies a capability token and returns its payload if valid.
 
@@ -70,6 +73,7 @@ def verify_token(token: str) -> Dict[str, Any]:
 
     Args:
         token: The capability token string to verify.
+        redis_client: A connected Redis client for nonce verification.
 
     Returns:
         The payload dictionary if the token is valid.
@@ -77,6 +81,9 @@ def verify_token(token: str) -> Dict[str, Any]:
     Raises:
         InvalidCapabilityError: If the token is invalid for any reason.
     """
+    if not redis_client:
+        raise ValueError("A Redis client is required for nonce verification.")
+
     try:
         payload_json_str, signature = token.rsplit('.', 1)
     except ValueError:
@@ -97,13 +104,17 @@ def verify_token(token: str) -> Dict[str, Any]:
     nonce = payload.get("nonce")
     if not nonce:
         raise InvalidCapabilityError("Token is missing a nonce.")
-    if nonce in _USED_NONCES:
+
+    # SADD returns 0 if the member already exists, 1 if it was added.
+    # This is an atomic check-and-set operation.
+    if await redis_client.sadd(NONCE_SET_KEY, nonce) == 0:
         raise InvalidCapabilityError("Token has already been used (replay attack).")
 
-    # 4. Mark the nonce as used
-    _USED_NONCES.add(nonce)
+    # To prevent the nonce set from growing forever, we set an expiration
+    # on the nonce itself, making it slightly longer than the token's
+    # expiration to account for clock skew.
+    token_lifetime = expires_at - payload.get("iat", expires_at)
+    await redis_client.expire(f"nonce:{nonce}", int(token_lifetime + 60))
 
-    # The nonce store should be periodically cleaned of expired nonces
-    # to prevent it from growing indefinitely. This is omitted for simplicity here.
 
     return payload

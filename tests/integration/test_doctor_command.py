@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch, AsyncMock
 import subprocess
+import sys
 
 from pforge.project import Project
 from pforge.validation.test_runner import run_tests
@@ -55,7 +56,7 @@ def test_doctor_command_e2e(mock_llm_chat, doctor_e2e_project):
 
     # --- Run the doctor command ---
     command = [
-        "python",
+        sys.executable,
         "-m",
         "pforge.cli.main",
         "doctor",

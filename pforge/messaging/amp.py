@@ -1,9 +1,12 @@
 from __future__ import annotations
 import time
 import uuid
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from pforge.proof.bundle import ProofBundle
 
 class AMPMessage(BaseModel):
     """

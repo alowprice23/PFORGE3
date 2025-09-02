@@ -59,15 +59,22 @@ class InMemoryBus:
     async def get(self, subscriber_name: str, timeout: float | None = None) -> Any | None:
         """
         Waits for and retrieves a message from a subscriber's personal queue.
-        Returns None if the timeout is reached.
+        - If timeout is None, it waits forever.
+        - If timeout is a float, it waits for that many seconds.
+        - If timeout is 0, it does not wait and gets an item if one is immediately available.
+        Returns None if a timeout occurs or if the queue is empty (for timeout=0).
         """
         queue = self._get_or_create_subscriber_queue(subscriber_name)
         try:
-            if timeout:
+            if timeout == 0:
+                return queue.get_nowait()
+            elif timeout:
                 return await asyncio.wait_for(queue.get(), timeout=timeout)
             else:
                 return await queue.get()
         except asyncio.TimeoutError:
+            return None
+        except asyncio.QueueEmpty:
             return None
 
     async def start(self):

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .base_agent import BaseAgent
-from pforge.orchestrator.signals import MsgType, Message
+from pforge.orchestrator.signals import MsgType, Message, BacktrackDelta
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -45,12 +45,23 @@ class BacktrackerAgent(BaseAgent):
 
             logger.info(f"Successfully reverted {file_path_str}.")
 
+            # Publish a delta signal indicating a backtrack occurred.
+            delta_message = Message(
+                type=MsgType.BACKTRACK_DELTA,
+                payload={"agent_name": self.name, "value": 1}
+            )
+            await self.publish(MsgType.BACKTRACK_DELTA.value, delta_message)
+            logger.info("[BacktrackerLog] Published BacktrackDelta signal.")
+
+            # The original code mentioned publishing a "backtrack.completed" event.
+            # This is a good idea for orchestration, so let's define and publish it.
+            # I'll need to add BACKTRACK_COMPLETED to the MsgType enum later.
             revert_message = Message(
-                type="backtrack.completed", # This should be a new MsgType
+                type="backtrack.completed",
                 payload={"file_path": file_path_str, "status": "reverted"}
             )
-            # This message type is not defined, so we'll just log it for now.
-            # await self.publish("backtrack.completed", revert_message)
+            # For now, let's assume the topic is the same as the message type string.
+            await self.publish("backtrack.completed", revert_message)
 
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to revert {file_path_str} with git: {e.stderr}")

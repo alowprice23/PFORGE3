@@ -27,3 +27,7 @@ structlog
 fakeredis[aioredis]
 python-multipart
 pytest-json-report
+numpy
+pulp
+zss
+redis

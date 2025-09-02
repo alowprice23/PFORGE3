@@ -1,9 +1,10 @@
 from __future__ import annotations
 import asyncio
 import logging
-from typing import Dict, List, Type
+from typing import Dict, List, Type, TYPE_CHECKING
 
-from pforge.agents.base_agent import BaseAgent
+if TYPE_CHECKING:
+    from pforge.agents.base_agent import BaseAgent
 from pforge.config import Config
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.agent_registry import AgentRegistry
@@ -28,7 +29,7 @@ class Orchestrator:
         self.bus = InMemoryBus()
         self.state_bus = StateBus(self.bus)
         self.agent_registry = AgentRegistry()
-        self.agents: List[BaseAgent] = []
+        self.agents: List['BaseAgent'] = []
         self.retry_counts: Dict[str, int] = {}
         self.completion_event = asyncio.Event()
         self.success = False

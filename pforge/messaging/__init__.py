@@ -7,6 +7,8 @@ from .amp import AMPMessage
 from .in_memory_bus import InMemoryBus
 from pforge.proof.bundle import ProofBundle
 
+# The forward reference to 'ProofBundle' in AMPMessage is resolved here.
+# This needs to be done after all models are loaded to avoid circular imports.
 AMPMessage.model_rebuild()
 
 __all__ = [

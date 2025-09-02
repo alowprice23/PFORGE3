@@ -1,19 +1,55 @@
 from __future__ import annotations
 import re
 from typing import Any, Dict, Tuple
+from pathlib import Path
+import yaml
+import logging
 
-# In a real system, these patterns would be loaded from a config file
-# like `policies/redaction/patterns.yaml` and would be much more extensive.
-DEFAULT_REDACTION_PATTERNS = {
-    # Matches common API key formats (e.g., sk-..., pk_..., etc.)
-    "api_key": re.compile(r'(sk|pk)_[a-zA-Z0-9]{20,}'),
-    # Matches common secret formats (e.g., AWS keys)
-    "aws_secret": re.compile(r'(?<![A-Z0-9])[A-Z0-9]{20,}(?![A-Z0-9])'),
-    # A simple email pattern
-    "email": re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
-}
+# Get the root directory of the project
+# This assumes the script is run from within the pforge project structure.
+# A more robust solution might use importlib.resources or a dedicated config loader.
+try:
+    from pforge.utils.paths import PFORGE_ROOT
+except (ImportError, ModuleNotFoundError):
+    # Fallback for environments where pforge is not installed as a package
+    PFORGE_ROOT = Path(__file__).parent.parent.parent
+
+logger = logging.getLogger(__name__)
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
+PATTERNS_FILE = PFORGE_ROOT / "policies/redaction/patterns.yaml"
+
+def load_redaction_patterns(patterns_path: Path = PATTERNS_FILE) -> Dict[str, re.Pattern]:
+    """
+    Loads redaction patterns from the specified YAML file.
+    """
+    if not patterns_path.exists():
+        logger.warning(f"Redaction patterns file not found at {patterns_path}. Using empty patterns.")
+        return {}
+
+    try:
+        with open(patterns_path, 'r') as f:
+            config = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing redaction patterns YAML file: {e}")
+        return {}
+
+    patterns = {}
+    regex_list = config.get('regex', [])
+    for i, pattern_str in enumerate(regex_list):
+        try:
+            # Use the pattern string itself as the key if no name is provided
+            key = f"regex_{i}"
+            patterns[key] = re.compile(pattern_str)
+        except re.error as e:
+            logger.error(f"Invalid regex pattern in {patterns_path}: '{pattern_str}'. Error: {e}")
+            continue
+
+    logger.info(f"Loaded {len(patterns)} redaction patterns from {patterns_path}.")
+    return patterns
+
+# Load patterns once on module import
+COMPILED_REDACTION_PATTERNS = load_redaction_patterns()
 
 class RedactionReport:
     """
@@ -34,7 +70,7 @@ class RedactionReport:
 
 def scrub(
     data: Any,
-    patterns: Dict[str, re.Pattern] = DEFAULT_REDACTION_PATTERNS
+    patterns: Optional[Dict[str, re.Pattern]] = None
 ) -> Tuple[Any, RedactionReport]:
     """
     Recursively traverses a data structure and redacts sensitive information.
@@ -44,11 +80,15 @@ def scrub(
 
     Args:
         data: The data to scrub.
-        patterns: A dictionary of compiled regex patterns to apply.
+        patterns: A dictionary of compiled regex patterns to apply. If None,
+                  the patterns loaded from the default YAML file are used.
 
     Returns:
         A tuple containing the scrubbed data and a RedactionReport.
     """
+    if patterns is None:
+        patterns = COMPILED_REDACTION_PATTERNS
+
     report = RedactionReport()
     scrubbed_data = _scrub_recursive(data, patterns, report)
     return scrubbed_data, report

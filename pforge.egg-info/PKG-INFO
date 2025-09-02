@@ -39,6 +39,10 @@ Requires-Dist: structlog
 Requires-Dist: fakeredis[aioredis]
 Requires-Dist: python-multipart
 Requires-Dist: pytest-json-report
+Requires-Dist: numpy
+Requires-Dist: pulp
+Requires-Dist: zss
+Requires-Dist: redis
 
 # pForge
 

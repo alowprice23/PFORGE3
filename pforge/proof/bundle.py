@@ -2,7 +2,11 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
-from pforge.orchestrator.signals import ProofObligation
+class ProofObligation(BaseModel):
+    """Represents the result of checking a single formal constraint (φ)."""
+    id: str = Field(..., description="The unique identifier of the constraint (e.g., 'lint.ruff.I001').")
+    ok: Optional[bool] = Field(None, description="True if the constraint is satisfied, False if violated.")
+    witness: Optional[Dict[str, Any]] = Field(None, description="Evidence for the outcome (e.g., linter output, test failure details).")
 
 class ProofBundle(BaseModel):
     """

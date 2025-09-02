@@ -6,6 +6,7 @@ from pathlib import Path
 from .base_agent import BaseAgent
 from pforge.validation.test_runner import run_tests
 from pforge.orchestrator.signals import MsgType, Message
+from pforge.orchestrator.state_bus import PuzzleState
 from pforge.math_models.entropy import calculate_entropy
 from pforge.math_models.efficiency import compute_intelligent_efficiency
 
@@ -36,9 +37,14 @@ class ObserverAgent(BaseAgent):
 
         # Calculate metrics
         entropy = calculate_entropy(test_result.failed, test_result.passed)
-        # Efficiency calculation requires a state object, which we don't have here.
-        # We will pass a simplified state for now.
-        efficiency = compute_intelligent_efficiency({"gaps": test_result.failed}, {})
+        # Efficiency calculation requires a state object. We create a temporary
+        # one here representing the state observed in this tick.
+        current_state = PuzzleState(
+            gaps=test_result.failed,
+            total_tests=test_result.total,
+            passing_tests=test_result.passed,
+        )
+        efficiency = compute_intelligent_efficiency(current_state, {})
 
         metrics_message = Message(
             type=MsgType.METRICS_UPDATED,

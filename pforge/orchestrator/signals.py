@@ -17,18 +17,25 @@ class MsgType(str, Enum):
     SPEC_CHECKED = "spec.checked"
     CONFLICT_FOUND = "conflict.found"
 
+    # Delta signals for the EfficiencyAnalystAgent
+    GAP_DELTA = "delta.gap"
+    MISFIT_DELTA = "delta.misfit"
+    FALSE_PIECE_DELTA = "delta.false_piece"
+    RISK_DELTA = "delta.risk"
+    BACKTRACK_DELTA = "delta.backtrack"
+    ENTROPY_DELTA = "delta.entropy"
+    PHI_DELTA = "delta.phi"
+
+    # Agent lifecycle/event signals
+    BACKTRACK_COMPLETED = "backtrack.completed"
+    PROPOSE_REMOVAL = "removal.propose"
+    ACCEPT_REMOVAL = "removal.accept"
+
 @dataclass
 class Message:
     """A standardized message object for the in-memory bus."""
     type: MsgType
     payload: Dict[str, Any]
-
-# From proof/PLAN.md, this is needed by proof/bundle.py
-@dataclass
-class ProofObligation:
-    id: str
-    ok: Optional[bool] = None
-    witness: Optional[Dict[str, Any]] = None
 
 # From orchestrator/PLAN.md, these are the delta signals for the efficiency engine
 @dataclass

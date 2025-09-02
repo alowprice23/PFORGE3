@@ -2,9 +2,11 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
-from typing import Dict, Type
+from typing import Dict, Type, TYPE_CHECKING
 
-from pforge.agents.base_agent import BaseAgent
+if TYPE_CHECKING:
+    from pforge.agents.base_agent import BaseAgent
+
 
 class AgentRegistry:
     """
@@ -12,7 +14,7 @@ class AgentRegistry:
     """
 
     def __init__(self):
-        self.agents: Dict[str, Type[BaseAgent]] = {}
+        self.agents: Dict[str, Type['BaseAgent']] = {}
         self._discover_agents()
 
     def _discover_agents(self):
@@ -23,6 +25,7 @@ class AgentRegistry:
         # The `pforge.agents` package should handle its own imports to ensure
         # all agent modules are loaded when the package is imported.
         import pforge.agents
+        from pforge.agents.base_agent import BaseAgent
 
         for subclass in BaseAgent.__subclasses__():
             agent_name = getattr(subclass, 'name', None)

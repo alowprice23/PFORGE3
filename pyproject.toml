@@ -45,7 +45,11 @@ dependencies = [
     "structlog",
     "fakeredis[aioredis]",
     "python-multipart",
-    "pytest-json-report"
+    "pytest-json-report",
+    "numpy",
+    "pulp",
+    "zss",
+    "redis"
 ]
 
 [project.urls]

@@ -52,6 +52,21 @@ class Project:
         except Exception as e:
             raise IOError(f"Error writing to file {file_path}: {e}")
 
+    def delete_file(self, file_path: Path | str):
+        """
+        Deletes a file within the project.
+
+        :param file_path: Relative path to the file to delete.
+        """
+        abs_path = self._resolve_path(file_path)
+        if not abs_path.is_file():
+            raise FileNotFoundError(f"File not found, cannot delete: {file_path}")
+
+        try:
+            abs_path.unlink()
+        except Exception as e:
+            raise IOError(f"Error deleting file {file_path}: {e}")
+
     def _resolve_path(self, file_path: Path | str) -> Path:
         """
         Resolves a relative path to an absolute path within the project,

@@ -6,7 +6,7 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from .base_agent import BaseAgent
-from pforge.orchestrator.signals import MsgType, Message
+from pforge.orchestrator.signals import MsgType, Message, GapDelta
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.proof.bundle import ProofBundle, ProofObligation
@@ -72,11 +72,19 @@ class FixerAgent(BaseAgent):
         return prompt
 
     async def _handle_fix_task(self, payload: dict):
-        file_path = payload['file_path']
-        description = payload['description']
+        file_path = payload.get('file_path')
+        description = payload.get('description')
         failed_test_nodeid = payload.get('failed_test_nodeid')
+        op_id = payload.get('op_id')
+        token = payload.get('capability_token')
 
-        logger.info(f"[FixerLog] Attempting to fix file: {file_path}")
+        if not all([file_path, description, op_id, token]):
+            logger.error(f"Invalid FIX_TASK message received: {payload}")
+            return
+
+        self.receive_token(token, op_id)
+
+        logger.info(f"[FixerLog] Attempting to fix file: {file_path} with op_id {op_id}")
 
         try:
             original_content = self.project.read_file(file_path)
@@ -114,11 +122,21 @@ class FixerAgent(BaseAgent):
                 logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
                 corrected_content = llm_response
 
+            if not await self.has_capability("fs:write", op_id):
+                logger.error(f"Missing 'fs:write' capability for op_id {op_id}. Aborting fix.")
+                return
+
             try:
                 self.project.write_file(file_path, corrected_content)
                 content_sha_after = hashlib.sha256(corrected_content.encode()).hexdigest()
             except IOError as e:
                 logger.error(f"[FixerLog] Failed to write fix to {file_path}: {e}")
+                return
+
+            if not await self.has_capability("exec:test", op_id):
+                logger.error(f"Missing 'exec:test' capability for op_id {op_id}. Aborting verification.")
+                # We can't verify, so we can't proceed. Revert the change.
+                self.project.write_file(file_path, original_content)
                 return
 
             test_file = failed_test_nodeid.split("::")[0] if failed_test_nodeid else None
@@ -135,6 +153,14 @@ class FixerAgent(BaseAgent):
                 logger.info(f"[FixerLog] Fix successful for {file_path}")
                 result_msg_type = MsgType.FIX_PATCH_APPLIED
                 result_payload = {"file_path": file_path}
+
+                # Publish a delta signal indicating one gap has been closed.
+                delta_message = Message(
+                    type=MsgType.GAP_DELTA,
+                    payload={"agent_name": self.name, "value": -1}
+                )
+                await self.publish(MsgType.GAP_DELTA.value, delta_message)
+                logger.info("[FixerLog] Published GapDelta signal.")
             else:
                 logger.warning(f"[FixerLog] Fix failed for {file_path}")
                 traceback = "No verification result."

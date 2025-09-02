@@ -21,3 +21,23 @@ feature_flags:
 mode: local # or docker
 
 cadence: 1.0 # orchestrator tick interval in seconds
+
+specifications:
+  # Configuration for the SpecOracleAgent.
+  # Each check can be enabled or disabled.
+  # The `command` field should be a template with {file_path} as a placeholder.
+  ruff:
+    enabled: true
+    command: "ruff check --select I --fix-safety=unsafe {file_path}"
+  mypy:
+    enabled: false # mypy can be slow, so disable by default
+    command: "mypy --strict {file_path}"
+  disallowed_imports:
+    # A custom check for architectural rules.
+    # The SpecOracleAgent will need specific logic to handle this.
+    enabled: true
+    rules:
+      - from: "pforge.agents"
+        disallow: "pforge.server"
+      - from: "pforge.models"
+        disallow: "pforge.agents"
