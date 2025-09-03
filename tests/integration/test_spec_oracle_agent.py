@@ -1,10 +1,12 @@
-import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
-from pforge.project import Project
+import pytest
+
 from pforge.agents.spec_oracle_agent import SpecOracleAgent
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import Message, MsgType
+from pforge.project import Project
+
 
 @pytest.fixture
 def temp_project_with_violation(tmp_path):
@@ -14,8 +16,8 @@ def temp_project_with_violation(tmp_path):
     (tmp_path / "pforge" / "server" / "app.py").write_text("# Dummy server file")
 
     (tmp_path / "pforge" / "agents").mkdir()
-    # This file has a disallowed import
-    (tmp_path / "pforge" / "agents" / "some_agent.py").write_text("from pforge.server import app\n\n# Bad import")
+    # This file has a disallowed import using an alias, which a simple string search might miss.
+    (tmp_path / "pforge" / "agents" / "some_agent.py").write_text("from pforge import server as srv\n\n# Bad import")
     return Project(tmp_path)
 
 @pytest.fixture
@@ -41,8 +43,7 @@ async def test_spec_oracle_detects_violation(temp_project_with_violation, mock_c
     # Initialize the agent with the special config
     agent = SpecOracleAgent(bus=bus, config=mock_config_with_spec, project=temp_project_with_violation)
 
-    # The bus needs a subscriber for the outgoing message, we can use a mock for that
-    mock_subscriber = AsyncMock()
+    # The bus needs a subscriber for the outgoing message
     bus.subscribe("test_subscriber", MsgType.SPEC_CHECKED.value)
 
     # 1. Publish a message indicating the file was "patched"
@@ -69,4 +70,4 @@ async def test_spec_oracle_detects_violation(temp_project_with_violation, mock_c
     disallowed_check = payload["checks"][0]
     assert disallowed_check["check"] == "disallowed_imports"
     assert disallowed_check["passed"] is False
-    assert "disallowed module" in disallowed_check["output"]
+    assert "pforge.server" in disallowed_check["output"]

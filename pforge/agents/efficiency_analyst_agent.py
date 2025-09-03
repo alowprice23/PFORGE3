@@ -4,7 +4,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from .base_agent import BaseAgent
-from pforge.orchestrator.signals import MsgType, Message, GapDelta, MisfitDelta, FalsePieceDelta, RiskDelta, BacktrackDelta, EntropyDelta, PhiDelta
+from pforge.orchestrator.signals import MsgType, Message
 from pforge.orchestrator.state_bus import StateBus, PuzzleState
 from pforge.orchestrator.efficiency_engine import EfficiencyEngine
 

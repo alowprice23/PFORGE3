@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from enum import Enum
 
 class MsgType(str, Enum):
@@ -16,6 +16,20 @@ class MsgType(str, Enum):
     METRICS_UPDATED = "metrics.updated"
     SPEC_CHECKED = "spec.checked"
     CONFLICT_FOUND = "conflict.found"
+
+    # Formatting signals
+    FORMAT_FILE = "format.file"
+    FILE_FORMATTED = "file.formatted"
+    FORMATTING_FAILED = "formatting.failed"
+
+    # Planner signals
+    TASK_ANALYZED = "task.analyzed"
+
+    # Conflict resolution signals
+    CONFLICT_ANALYZED = "conflict.analyzed"
+
+    # Recovery signals
+    RECOVERY_ACTION_TAKEN = "recovery.action_taken"
 
     # Delta signals for the EfficiencyAnalystAgent
     GAP_DELTA = "delta.gap"

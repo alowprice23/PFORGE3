@@ -2,38 +2,42 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+import tempfile
 
 def _run_formatter(command: list[str], path: str | Path) -> tuple[str, int]:
     """
     A helper function to run a command-line tool and capture its output.
-
-    Args:
-        command: The command to run as a list of strings.
-        path: The file or directory path to run the formatter on.
-
-    Returns:
-        A tuple containing the combined stdout and stderr, and the exit code.
+    It redirects to a file to prevent potential deadlocks when a synchronous
+    subprocess is called from an async event loop.
     """
-    try:
-        # We need to ensure we're using the python from the same environment
-        # that is running pforge.
-        executable_dir = Path(sys.executable).parent
-        cmd = [str(executable_dir / c) for c in command] + [str(path)]
+    with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding='utf-8') as f:
+        log_path = Path(f.name)
 
-        process = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,  # Do not raise exception on non-zero exit code
-        )
-        output = process.stdout + process.stderr
+    try:
+        executable_dir = Path(sys.executable).parent
+        cmd = [str(executable_dir / command[0])] + command[1:] + [str(path)]
+
+        with log_path.open("w", encoding='utf-8') as f_out:
+            process = subprocess.run(
+                cmd,
+                stdout=f_out,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+
+        output = log_path.read_text(encoding='utf-8')
         return output, process.returncode
     except FileNotFoundError:
-        # This occurs if the formatter is not installed in the environment.
         formatter_name = command[0]
-        return f"Error: '{formatter_name}' not found. Is it installed?", 1
+        error_msg = f"Error: '{formatter_name}' not found. Is it installed?"
+        return error_msg, 1
     except Exception as e:
-        return f"An unexpected error occurred: {e}", 1
+        error_msg = f"An unexpected error occurred: {e}"
+        return error_msg, 1
+    finally:
+        if 'log_path' in locals() and log_path.exists():
+            log_path.unlink()
 
 
 def run_black(path: str | Path) -> tuple[str, int]:
@@ -55,13 +59,14 @@ def run_ruff(path: str | Path, fix: bool = True) -> tuple[str, int]:
 
     Args:
         path: The file or directory path to check.
-        fix: If True, runs `ruff check --fix` to automatically fix issues.
+        fix: If True, runs `ruff format` to automatically fix issues.
              If False, just runs `ruff check`.
 
     Returns:
         A tuple containing the combined stdout and stderr, and the exit code.
     """
-    command = ["ruff", "check"]
     if fix:
-        command.append("--fix")
+        command = ["ruff", "format"]
+    else:
+        command = ["ruff", "check"]
     return _run_formatter(command, path)

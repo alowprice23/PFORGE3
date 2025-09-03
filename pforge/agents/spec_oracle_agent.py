@@ -2,10 +2,12 @@ from __future__ import annotations
 import logging
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Dict, Any
+from typing import TYPE_CHECKING, Dict, Any
 
+import libcst as cst
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
+from pforge.tools.ast_utils import find_disallowed_imports
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -38,7 +40,10 @@ class SpecOracleAgent(BaseAgent):
         if not message or message.type != MsgType.FIX_PATCH_APPLIED:
             return
 
-        file_path_str = message.payload.get("file_path")
+        payload = message.payload
+        file_path_str = payload.get("file_path")
+        op_id = payload.get("op_id") # Get the op_id from the incoming message
+
         if not file_path_str:
             return
 
@@ -74,6 +79,7 @@ class SpecOracleAgent(BaseAgent):
                 "file_path": file_path_str,
                 "is_valid": overall_valid,
                 "checks": check_results,
+                "op_id": op_id, # Pass the op_id through
             }
         )
         await self.publish(MsgType.SPEC_CHECKED.value, spec_checked_message)
@@ -104,24 +110,24 @@ class SpecOracleAgent(BaseAgent):
             return {"check": name, "passed": False, "output": f"Error: Failed to execute command '{command}'. Exception: {e}"}
 
     def _run_disallowed_imports_check(self, config: Dict[str, Any], file_path: Path) -> Dict[str, Any]:
-        """A custom check to find disallowed import statements."""
-        logger.info(f"Running disallowed_imports check on {file_path}")
+        """A custom check to find disallowed import statements using an AST."""
+        logger.info(f"Running AST-based disallowed_imports check on {file_path}")
         rules = config.get("rules", [])
         if not rules:
             return {"check": "disallowed_imports", "passed": True, "output": "No rules configured."}
 
+        disallowed_list = [rule.get("disallow") for rule in rules if rule.get("disallow")]
+
         try:
             content = file_path.read_text()
-            violations = []
-            for rule in rules:
-                disallowed_import = rule.get("disallow")
-                # This is a simple string check. A real implementation would use an AST.
-                if f"import {disallowed_import}" in content or f"from {disallowed_import}" in content:
-                    violations.append(f"File imports disallowed module '{disallowed_import}'")
+            tree = cst.parse_module(content)
+            violations = find_disallowed_imports(tree, disallowed_list)
 
             if violations:
                 return {"check": "disallowed_imports", "passed": False, "output": "\n".join(violations)}
             else:
                 return {"check": "disallowed_imports", "passed": True, "output": "OK"}
+        except cst.ParserSyntaxError as e:
+            return {"check": "disallowed_imports", "passed": False, "output": f"Error parsing file with LibCST: {e}"}
         except Exception as e:
-            return {"check": "disallowed_imports", "passed": False, "output": f"Error reading file: {e}"}
+            return {"check": "disallowed_imports", "passed": False, "output": f"Error reading or processing file: {e}"}

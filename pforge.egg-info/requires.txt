@@ -31,3 +31,6 @@ numpy
 pulp
 zss
 redis
+hypernetx
+python-sat
+fastjsonschema

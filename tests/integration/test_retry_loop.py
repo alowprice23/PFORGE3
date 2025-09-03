@@ -1,8 +1,8 @@
 import asyncio
-from unittest.mock import patch, AsyncMock, MagicMock
+import subprocess
+from unittest.mock import AsyncMock, patch
 
 import pytest
-import subprocess
 
 from pforge.config import Config
 from pforge.orchestrator.core import Orchestrator
@@ -33,7 +33,6 @@ def project_with_retry_limit(tmp_path):
     return Project(project_root)
 
 
-from unittest.mock import patch, AsyncMock
 
 @pytest.mark.asyncio
 @patch("pforge.agents.observer_agent.ObserverAgent.on_tick", new_callable=AsyncMock)

@@ -23,6 +23,8 @@ from .misfit_agent import MisfitAgent
 from .false_piece_agent import FalsePieceAgent
 from .backtracker_agent import BacktrackerAgent
 from .summarizer_agent import SummarizerAgent
+from .formatter_agent import FormatterAgent
+from .recovery_agent import RecoveryAgent
 
 # A dictionary to make all agent classes easily accessible for registration.
 AGENT_CLASSES = {
@@ -35,6 +37,8 @@ AGENT_CLASSES = {
     "false_piece": FalsePieceAgent,
     "backtracker": BacktrackerAgent,
     "summarizer": SummarizerAgent,
+    "formatter": FormatterAgent,
+    "recovery": RecoveryAgent,
 }
 
 __all__ = [
@@ -48,5 +52,7 @@ __all__ = [
     "FalsePieceAgent",
     "BacktrackerAgent",
     "SummarizerAgent",
+    "FormatterAgent",
+    "RecoveryAgent",
     "AGENT_CLASSES",
 ]

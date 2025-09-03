@@ -3,7 +3,6 @@
 This file contains the smoke tests for the doctor agent.
 """
 
-import pytest
 
 def test_doctor_smoke():
     """A smoke test for the doctor agent."""

@@ -4,7 +4,6 @@ import os
 import re
 import orjson
 from typing import TYPE_CHECKING
-from pathlib import Path
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -13,6 +12,8 @@ from pforge.llm_clients.budget_meter import BudgetMeter
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.config import Config
+    from pforge.project import Project
 
 logger = logging.getLogger(__name__)
 

@@ -13,3 +13,11 @@ retry_limit = 2
 
 # [llm.providers.anthropic]
 # model = "claude-3-opus-20240229"
+
+[recovery]
+enabled = true
+# A list of health checks to run periodically.
+# Each check maps a detector function to a recovery action function.
+checks = [
+    { detector = "pforge.recovery.detectors.packages.check_pip_dependencies", action = "pforge.recovery.actions.pkg_resolve.install_packages" }
+]

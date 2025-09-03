@@ -6,7 +6,7 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from .base_agent import BaseAgent
-from pforge.orchestrator.signals import MsgType, Message, GapDelta
+from pforge.orchestrator.signals import MsgType, Message
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.proof.bundle import ProofBundle, ProofObligation
@@ -152,7 +152,7 @@ class FixerAgent(BaseAgent):
             if fix_is_ok:
                 logger.info(f"[FixerLog] Fix successful for {file_path}")
                 result_msg_type = MsgType.FIX_PATCH_APPLIED
-                result_payload = {"file_path": file_path}
+                result_payload = {"file_path": file_path, "op_id": op_id}
 
                 # Publish a delta signal indicating one gap has been closed.
                 delta_message = Message(
@@ -172,6 +172,7 @@ class FixerAgent(BaseAgent):
                     "file_path": file_path,
                     "description": description,
                     "failed_test_nodeid": failed_test_nodeid,
+                    "op_id": op_id,
                     "traceback": traceback,
                 }
                 self.project.write_file(file_path, original_content)

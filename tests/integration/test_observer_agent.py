@@ -1,17 +1,13 @@
-import asyncio
-import os
 import tempfile
-import pytest
 from pathlib import Path
 
+import pytest
+
 from pforge.agents.observer_agent import ObserverAgent
-from pforge.orchestrator.state_bus import StateBus
-from pforge.orchestrator.efficiency_engine import EfficiencyEngine
+from pforge.config import Config
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import MsgType
-
 from pforge.project import Project
-from pforge.config import Config
 
 
 @pytest.mark.asyncio

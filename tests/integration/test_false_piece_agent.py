@@ -1,12 +1,13 @@
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from pforge.project import Project
+import pytest
+
 from pforge.agents.false_piece_agent import FalsePieceAgent
 from pforge.agents.planner_agent import PlannerAgent
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import MsgType
+from pforge.project import Project
+
 
 @pytest.fixture
 def temp_project(tmp_path):

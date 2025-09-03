@@ -3,11 +3,10 @@ import logging
 from typing import Dict, Callable, List, Tuple, Any
 
 from pforge.recovery.detectors import (
-    packages, runtime_versions, services, ports, secrets, time_tz,
-    data_migrations, tooling_drift
+    packages, runtime_versions, services, ports, time_tz
 )
 from pforge.recovery.actions import (
-    pkg_resolve, service_boot, port_reassign, tz_set, migrate_seed, env_relock
+    pkg_resolve, service_boot, port_reassign, tz_set
 )
 
 logger = logging.getLogger(__name__)

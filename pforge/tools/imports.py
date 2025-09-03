@@ -1,7 +1,7 @@
 from __future__ import annotations
 import libcst as cst
 from libcst.tool import suite
-from libcst.codemod import CodemodContext, VisitorBasedCodemodCommand
+from libcst.codemod import CodemodContext
 from libcst.codemod.visitors import AddImportsVisitor, RemoveImportsVisitor, GatherImportsVisitor
 
 def reorder_imports(code: str) -> str:

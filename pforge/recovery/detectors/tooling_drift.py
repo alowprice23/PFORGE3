@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Tuple
-from packaging.version import parse as parse_version, Version
+from packaging.version import parse as parse_version
 
 def check_tool_version(
     tool_name: str, expected_version_spec: str

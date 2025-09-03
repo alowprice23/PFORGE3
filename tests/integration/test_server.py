@@ -1,10 +1,11 @@
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 # We need to make sure the app object is created before running tests.
 # A common pattern is to have a factory function or to import the app
 # instance directly. We'll import it directly.
 from pforge.server.app import app
+
 
 @pytest.fixture(scope="module")
 def test_client():

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any
 
 def audit_qed_gates(session_log: List[Dict[str, Any]]) -> tuple[bool, List[Dict]]:
     """

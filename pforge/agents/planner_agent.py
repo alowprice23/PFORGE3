@@ -3,12 +3,11 @@ import logging
 from typing import TYPE_CHECKING, Dict, List, Any
 from dataclasses import dataclass
 import uuid
-import time
 import numpy as np
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
-from pforge.orchestrator.state_bus import StateBus, PuzzleState
+from pforge.orchestrator.state_bus import StateBus
 from pforge.planner.priority import calculate_priority
 from pforge.proof.capabilities import issue_token
 
@@ -44,7 +43,7 @@ class PlannerAgent(BaseAgent):
 
         # Subscribe to events that can create or resolve tasks
         self.bus.subscribe(self.name, MsgType.METRICS_UPDATED.value)
-        self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value) # To get failure details
+        self.bus.subscribe(self.name, MsgType.TASK_ANALYZED.value) # To get failure details and risk assessment
         self.bus.subscribe(self.name, MsgType.PROPOSE_REMOVAL.value)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value) # To clear completed tasks
 
@@ -82,8 +81,8 @@ class PlannerAgent(BaseAgent):
             if not message:
                 break
 
-            if message.type == MsgType.TESTS_FAILED:
-                self._add_fix_tasks_from_failure(message.payload)
+            if message.type == MsgType.TASK_ANALYZED:
+                self._add_fix_tasks_from_analysis(message.payload)
             elif message.type == MsgType.PROPOSE_REMOVAL:
                 self._add_removal_task(message.payload)
             elif message.type == MsgType.FIX_PATCH_APPLIED:
@@ -95,18 +94,24 @@ class PlannerAgent(BaseAgent):
                     self.dispatched_tasks.discard(task_id)
                     logger.info(f"Removed completed task from board: {task_id}")
 
-    def _add_fix_tasks_from_failure(self, payload: dict):
-        """Create fix tasks from a TESTS_FAILED event."""
-        failed_tests = payload.get("failed_tests", [])
+    def _add_fix_tasks_from_analysis(self, payload: dict):
+        """Create fix tasks from a TASK_ANALYZED event."""
+        original_failure = payload.get("original_failure", {})
+        failed_tests = original_failure.get("failed_tests", [])
+        effort_dist = payload.get("effort_distribution")
+
+        if effort_dist is None:
+            logger.error("Received TASK_ANALYZED message without effort distribution.")
+            return
+
         for failure in failed_tests:
             nodeid = failure.get("nodeid")
             if not nodeid or nodeid in self.dispatched_tasks:
                 continue # Skip if no ID or already dispatched
 
-            # Placeholder values for advanced priority calculation
-            impact = 1.0
-            frequency = 1.0
-            effort_dist = np.array([len(failure.get("traceback", "")) / 1000.0 + 1.0])
+            # Use real data from the PredictorAgent
+            impact = 1.0  # Placeholder
+            frequency = 1.0 # Placeholder
 
             priority = calculate_priority(impact, frequency, effort_dist)
 
@@ -116,6 +121,7 @@ class PlannerAgent(BaseAgent):
                 description=f"Fix the bug causing test '{nodeid}' to fail.",
                 priority=priority,
                 effort=effort_dist.mean(),
+                # Pass the original failure payload to the dispatcher
                 payload=failure,
             )
             self.task_board[task.id] = task

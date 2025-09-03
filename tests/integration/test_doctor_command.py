@@ -1,13 +1,13 @@
-import asyncio
-import pytest
-from pathlib import Path
-import tempfile
-from unittest.mock import patch, AsyncMock
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
-from pforge.project import Project
+import pytest
+
 from pforge.validation.test_runner import run_tests
+
 
 @pytest.fixture
 def doctor_e2e_project():

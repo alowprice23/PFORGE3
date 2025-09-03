@@ -3,7 +3,6 @@
 This file contains the integration tests for the chat endpoint.
 """
 
-import pytest
 
 def test_chat_endpoint():
     """Tests the chat endpoint."""

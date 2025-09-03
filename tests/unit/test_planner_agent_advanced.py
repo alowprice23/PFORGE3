@@ -1,10 +1,12 @@
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import numpy as np
+import pytest
 
 from pforge.agents.planner_agent import PlannerAgent, Task
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.orchestrator.state_bus import PuzzleState
+
 
 @pytest.fixture
 def mock_bus():
@@ -32,15 +34,20 @@ def test_agent(mock_bus, mock_config):
 @pytest.mark.asyncio
 async def test_planner_creates_tasks_from_events(test_agent, mock_bus):
     # Prepare messages to be on the bus
-    tests_failed_msg = Message(
-        type=MsgType.TESTS_FAILED,
-        payload={"failed_tests": [{"nodeid": "tests/test_a.py::test_one", "traceback": "..."}]}
+    task_analyzed_msg = Message(
+        type=MsgType.TASK_ANALYZED,
+        payload={
+            "original_failure": {
+                "failed_tests": [{"nodeid": "tests/test_a.py::test_one", "traceback": "..."}]
+            },
+            "effort_distribution": np.array([1.5, 2.0, 2.5])
+        }
     )
     propose_removal_msg = Message(
         type=MsgType.PROPOSE_REMOVAL,
         payload={"file_path": "pforge/legacy/old_util.py"}
     )
-    mock_bus.get.side_effect = [tests_failed_msg, propose_removal_msg, None]
+    mock_bus.get.side_effect = [task_analyzed_msg, propose_removal_msg, None]
 
     # Run the update logic
     await test_agent._update_task_board()

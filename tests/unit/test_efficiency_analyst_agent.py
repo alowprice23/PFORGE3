@@ -1,9 +1,11 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 from pforge.agents.efficiency_analyst_agent import EfficiencyAnalystAgent
-from pforge.orchestrator.signals import Message, MsgType, GapDelta
+from pforge.orchestrator.signals import Message, MsgType
 from pforge.orchestrator.state_bus import PuzzleState
+
 
 @pytest.fixture
 def mock_bus():

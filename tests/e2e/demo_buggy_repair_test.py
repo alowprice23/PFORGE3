@@ -3,7 +3,6 @@
 This file contains the E2E tests for the demo buggy repair.
 """
 
-import pytest
 
 def test_demo_buggy_repair():
     """Tests the demo buggy repair."""

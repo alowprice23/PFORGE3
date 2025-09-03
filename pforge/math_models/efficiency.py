@@ -26,7 +26,8 @@ def compute_intelligent_efficiency(state: PuzzleState, constants: Dict[str, floa
     beta = constants.get("beta", 1.0)
     eta = constants.get("eta", 1.5)
     theta = constants.get("theta", 2.0)
-    delta = constants.get("delta", 0.5) # Used for decay, though decay is passed in state
+    # TODO: The 'delta' constant for decay is not currently used in the formula.
+    # delta = constants.get("delta", 0.5)
 
     # P: Total "pieces" of the puzzle. We can proxy this with the initial number of issues.
     # If not set, we use the current number of open items as a dynamic baseline.

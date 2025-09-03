@@ -1,7 +1,6 @@
 from __future__ import annotations
-import os
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict
 
 import openai
 

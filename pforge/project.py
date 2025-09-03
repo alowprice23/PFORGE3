@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+class SecurityError(Exception):
+    """Custom exception for security violations in the project."""
+    pass
+
 class Project:
     """
     Represents the project being analyzed and fixed.

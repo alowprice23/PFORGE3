@@ -1,7 +1,4 @@
 from __future__ import annotations
-import importlib
-import inspect
-import pkgutil
 from typing import Dict, Type, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,7 +21,6 @@ class AgentRegistry:
         """
         # The `pforge.agents` package should handle its own imports to ensure
         # all agent modules are loaded when the package is imported.
-        import pforge.agents
         from pforge.agents.base_agent import BaseAgent
 
         for subclass in BaseAgent.__subclasses__():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 import asyncio
 import orjson
-import time
 from typing import AsyncGenerator, Dict
 
 from fastapi import APIRouter, Request, HTTPException
@@ -36,7 +35,7 @@ async def event_stream_generator(request: Request) -> AsyncGenerator[str, None]:
         if await request.is_disconnected():
             break
 
-        sse_event = f"event: message\n"
+        sse_event = "event: message\n"
         sse_event += f"data: {orjson.dumps({'message': 'placeholder event'}).decode('utf-8')}\n\n"
         yield sse_event
         await asyncio.sleep(5)

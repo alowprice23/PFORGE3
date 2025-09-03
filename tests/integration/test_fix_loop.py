@@ -1,16 +1,18 @@
 import asyncio
-import pytest
-from pathlib import Path
-import tempfile
-from unittest.mock import patch, AsyncMock
-import orjson
 import subprocess
+import tempfile
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import orjson
+import pytest
 
 from pforge.config import Config
-from pforge.project import Project
 from pforge.orchestrator.core import Orchestrator
-from pforge.orchestrator.signals import MsgType, Message
+from pforge.orchestrator.signals import Message, MsgType
+from pforge.project import Project
 from pforge.validation.test_runner import run_tests
+
 
 @pytest.fixture
 def e2e_project():
@@ -104,7 +106,7 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
         final_message = await bus.get(test_subscriber, timeout=20.0)
         assert final_message is not None
         assert final_message.type == MsgType.FIX_PATCH_APPLIED
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("Test timed out waiting for a fix to be applied and verified.")
     finally:
         orchestrator_task.cancel()

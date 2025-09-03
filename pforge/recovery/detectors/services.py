@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Tuple
-import os
 import importlib
 
 def check_redis_availability(

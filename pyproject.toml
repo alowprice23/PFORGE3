@@ -49,7 +49,10 @@ dependencies = [
     "numpy",
     "pulp",
     "zss",
-    "redis"
+    "redis",
+    "hypernetx",
+    "python-sat",
+    "fastjsonschema"
 ]
 
 [project.urls]

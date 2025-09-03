@@ -3,7 +3,6 @@ Configuration loading and management for pForge.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 import tomllib
@@ -25,6 +24,18 @@ class SpecificationsConfig:
     raw_config: Dict[str, Any]
 
 @dataclass
+class RecoveryCheck:
+    """Represents a single check in the recovery config."""
+    detector: str
+    action: str
+
+@dataclass
+class RecoveryConfig:
+    """Represents the 'recovery' block in the config."""
+    enabled: bool
+    checks: list[RecoveryCheck]
+
+@dataclass
 class Config:
     """
     Top-level configuration for pForge, loaded from pforge.toml.
@@ -32,6 +43,7 @@ class Config:
     llm: LLMConfig
     doctor: DoctorConfig
     specifications: SpecificationsConfig
+    recovery: RecoveryConfig
 
     @staticmethod
     def load(path: Path | str = "pforge.toml") -> Config:
@@ -52,10 +64,18 @@ class Config:
         with config_path.open("rb") as f:
             data = tomllib.load(f)
 
+        recovery_data = data.get("recovery", {})
+        recovery_checks = [RecoveryCheck(**check) for check in recovery_data.get("checks", [])]
+        recovery_config = RecoveryConfig(
+            enabled=recovery_data.get("enabled", False),
+            checks=recovery_checks
+        )
+
         return Config(
             llm=LLMConfig(model=data.get("llm", {}).get("model", "gpt-4-turbo")),
             doctor=DoctorConfig(retry_limit=data.get("doctor", {}).get("retry_limit", 3)),
             specifications=SpecificationsConfig(raw_config=data.get("specifications", {})),
+            recovery=recovery_config,
         )
 
 # Example of how to use it:

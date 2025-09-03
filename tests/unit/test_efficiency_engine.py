@@ -1,4 +1,5 @@
 import pytest
+
 from pforge.orchestrator.efficiency_engine import EfficiencyEngine
 from pforge.orchestrator.state_bus import PuzzleState
 
@@ -86,7 +87,7 @@ def test_efficiency_score_is_not_negative():
     """
     engine = EfficiencyEngine(TEST_CONSTANTS)
     # A state with a huge phi reward that would make the denominator negative
-    state = PuzzleState(tick=5, phi=10, total_issues=1)
+    # state = PuzzleState(tick=5, phi=10, total_issues=1) # TODO: This test seems incomplete or was being refactored.
 
     # Denominator = 5 - 2.5*10 = -20. max(denominator, 1.0) will be 1.0
     # P = 1, so score should be 1/1 = 1, but the formula clamps at 0.

@@ -1,6 +1,8 @@
 import unittest
-from pforge.orchestrator.agent_registry import AgentRegistry
+
 from pforge.agents.base_agent import BaseAgent
+from pforge.orchestrator.agent_registry import AgentRegistry
+
 
 # Define dummy agents for testing purposes
 class DummyAgent1(BaseAgent):

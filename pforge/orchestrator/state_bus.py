@@ -1,5 +1,4 @@
 from __future__ import annotations
-import orjson
 from dataclasses import asdict, dataclass, field
 from typing import Dict
 

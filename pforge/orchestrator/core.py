@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
-from typing import Dict, List, Type, TYPE_CHECKING
+from typing import Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pforge.agents.base_agent import BaseAgent
@@ -9,7 +9,7 @@ from pforge.config import Config
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.agent_registry import AgentRegistry
 from pforge.orchestrator.signals import MsgType, Message
-from pforge.orchestrator.state_bus import StateBus, PuzzleState
+from pforge.orchestrator.state_bus import StateBus
 from pforge.project import Project
 from pforge.math_models.efficiency import compute_intelligent_efficiency
 

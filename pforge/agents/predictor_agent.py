@@ -1,23 +1,24 @@
 from __future__ import annotations
 import logging
-import os
-import orjson
-from typing import TYPE_CHECKING, List, Dict
+import numpy as np
+from typing import TYPE_CHECKING, Dict
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
-from pforge.llm_clients.gemini_client import GeminiClient
-from pforge.llm_clients.budget_meter import BudgetMeter
+from pforge.storage.risk_model_db import RiskModelDB
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.config import Config
+    from pforge.project import Project
 
 logger = logging.getLogger(__name__)
 
 class PredictorAgent(BaseAgent):
     """
-    Uses an LLM to predict code stubs or changes that could fix a
-    reported test failure or specification gap.
+    Models the risk of editing files and provides risk-adjusted effort
+    estimates to the planner. It uses a Bayesian model to learn from
+    past successes and failures, stored in a SQLite database.
     """
     name = "predictor"
     tick_interval: float = 1.0
@@ -25,74 +26,84 @@ class PredictorAgent(BaseAgent):
     def __init__(self, bus: InMemoryBus, config: Config, project: Project):
         super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
+        self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
+        self.bus.subscribe(self.name, MsgType.BACKTRACK_COMPLETED.value)
 
-        # This would be injected in a real system
-        budget_meter = BudgetMeter(
-            tenant="pforge-dev",
-            daily_quota_tokens=1_000_000,
-            redis_client=self.bus.redis_client
-        )
-        self.llm_client = GeminiClient(
-            api_key=os.getenv("GEMINI_API_KEY"),
-            budget_meter=budget_meter
-        )
-        self.code_manifest: List[str] = []
+        self.risk_db = RiskModelDB()
 
     async def on_tick(self):
         """
-        Consumes test failures and spec gaps, then asks an LLM for predictions.
+        Consumes events to update the risk model and to assess new tasks.
         """
-        # First, check for a new file manifest to keep our context fresh
-        manifest_msg = await self.bus.get(f"{self.name}:manifest", timeout=0.1)
-        if manifest_msg and manifest_msg.type == "file_manifest":
-             self.code_manifest = manifest_msg.payload.get("files", [])
-
-        # Now, check for a failure to work on
-        failure_msg = await self.bus.get(self.name, timeout=0.1)
-        if not failure_msg or failure_msg.type != MsgType.TESTS_FAILED:
+        message = await self.bus.get(self.name, timeout=0.1)
+        if not message:
             return
 
-        logger.info("PredictorAgent consumed TESTS_FAILED event.")
-        await self._handle_failure(failure_msg.payload)
+        msg_type = message.type
+        payload = message.payload
 
-    def _build_prompt(self, failed_tests: List[Dict]) -> str:
-        """Builds a prompt for the Gemini model."""
-        # For now, just use the first failure
-        failure = failed_tests[0]
-        nodeid = failure.get("nodeid", "Unknown test")
-        traceback = failure.get("traceback", "No traceback provided.")
+        if msg_type == MsgType.TESTS_FAILED:
+            logger.info("PredictorAgent consumed TESTS_FAILED event. Assessing risk.")
+            await self._handle_failure_and_assess_risk(payload)
 
-        # A real prompt would be more sophisticated, using file content etc.
-        prompt = (
-            f"A test has failed: {nodeid}\n\n"
-            f"Traceback:\n{traceback}\n\n"
-            "Based on this failure, please provide a list of suggestions to fix the issue. "
-            "Each suggestion should be a JSON object with 'file_path', 'stub' (the code to add/change), "
-            "and 'confidence' (0.0-1.0).\n"
-            "Respond with only a valid JSON array of these objects."
-        )
-        return prompt
+        elif msg_type in [MsgType.FIX_PATCH_APPLIED, MsgType.BACKTRACK_COMPLETED]:
+            # The op_id is now the key to finding the file path for the update
+            op_id = payload.get("op_id")
+            if op_id:
+                # This assumes another agent is tracking which file belongs to which op_id.
+                # For now, we'll assume the file_path is still in the payload.
+                file_path = payload.get("file_path")
+                if file_path:
+                    success = msg_type == MsgType.FIX_PATCH_APPLIED
+                    self.risk_db.update_risk_params(file_path, success=success)
+                    logger.info(f"Updated risk for {file_path} (success={success})")
 
-    async def _handle_failure(self, payload: dict):
+    def _infer_source_path_from_test_failure(self, failure: Dict) -> str | None:
+        """A simple heuristic to infer a source file from a test file path."""
+        nodeid = failure.get("nodeid")
+        if not nodeid:
+            return None
+
+        test_file_path = nodeid.split("::")[0]
+
+        if "tests/unit/" in test_file_path:
+            return test_file_path.replace("tests/unit/", "pforge/").replace("test_", "")
+        elif "tests/integration/" in test_file_path:
+             return test_file_path.replace("tests/integration/", "pforge/").replace("test_", "")
+        return None
+
+    async def _handle_failure_and_assess_risk(self, payload: dict):
         failed_tests = payload.get("failed_tests", [])
         if not failed_tests:
             return
 
-        prompt = self._build_prompt(failed_tests)
+        source_path = self._infer_source_path_from_test_failure(failed_tests[0])
 
-        try:
-            response_text = await self.llm_client.chat(prompt)
-            suggestions = orjson.loads(response_text)
-            if not isinstance(suggestions, list):
-                logger.error("LLM did not return a list of suggestions.")
-                return
-        except Exception as e:
-            logger.error(f"Failed to get or parse prediction from LLM: {e}")
-            return
+        if not source_path:
+            logger.warning(f"Could not infer source path for failure: {failed_tests[0].get('nodeid')}")
+            # Get default risk if we can't determine the file
+            params = {"alpha": RiskModelDB.DEFAULT_ALPHA, "beta": RiskModelDB.DEFAULT_BETA}
+        else:
+            params = self.risk_db.get_risk_params(source_path)
 
-        prediction_message = Message(
-            type="predictions.made", # This will be a new MsgType
-            payload={"suggestions": suggestions}
+        alpha = params["alpha"]
+        beta = params["beta"]
+
+        effort_distribution = np.random.gamma(shape=alpha, scale=1/beta, size=100)
+
+        logger.info(f"Assessed risk for failure in '{source_path}'. Effort distribution generated "
+                    f"with alpha={alpha}, beta={beta}.")
+
+        analyzed_task_msg = Message(
+            type=MsgType.TASK_ANALYZED,
+            payload={
+                "original_failure": payload,
+                "effort_distribution": effort_distribution,
+                "inferred_source_path": source_path
+            }
         )
-        await self.publish("predictions.made", prediction_message)
-        logger.info(f"Published predictions with {len(suggestions)} suggestions.")
+        await self.publish(MsgType.TASK_ANALYZED.value, analyzed_task_msg)
+
+    def __del__(self):
+        """Ensure the database connection is closed when the agent is destroyed."""
+        self.risk_db.close()

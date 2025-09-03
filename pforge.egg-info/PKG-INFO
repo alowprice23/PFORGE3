@@ -43,6 +43,9 @@ Requires-Dist: numpy
 Requires-Dist: pulp
 Requires-Dist: zss
 Requires-Dist: redis
+Requires-Dist: hypernetx
+Requires-Dist: python-sat
+Requires-Dist: fastjsonschema
 
 # pForge
 

@@ -1,10 +1,11 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
 
 from pforge.agents.base_agent import BaseAgent
-from pforge.proof.capabilities import issue_token
 from pforge.orchestrator.signals import Message, MsgType
+from pforge.proof.capabilities import issue_token
+
 
 # A concrete agent class for testing purposes
 class ConcreteTestAgent(BaseAgent):
@@ -29,6 +30,7 @@ def test_agent(mock_bus):
     return ConcreteTestAgent(bus=mock_bus, config=config, project=project)
 
 import re
+
 
 @pytest.mark.asyncio
 async def test_receive_and_verify_capability(test_agent):

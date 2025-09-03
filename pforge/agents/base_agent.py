@@ -2,7 +2,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Dict
 
 from pforge.proof.capabilities import verify_token, InvalidCapabilityError
 from pforge.proof.redaction import scrub
@@ -11,7 +11,6 @@ from pforge.orchestrator.signals import Message
 if TYPE_CHECKING:
     from pforge.config import Config
     from pforge.messaging.in_memory_bus import InMemoryBus
-    from pforge.orchestrator.state_bus import PuzzleState
     from pforge.project import Project
 
 

@@ -3,7 +3,6 @@
 This file contains the integration tests for the solve cycle.
 """
 
-import pytest
 
 def test_solve_cycle():
     """Tests the solve cycle."""

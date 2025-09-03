@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import orjson
 import logging
 
 import socketio
