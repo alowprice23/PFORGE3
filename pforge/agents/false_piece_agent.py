@@ -3,9 +3,10 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Set
+from typing import TYPE_CHECKING, Set, Optional
 import orjson
 import asyncio
+from pydantic import BaseModel, Field, ValidationError
 import time
 
 from .base_agent import BaseAgent
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+class FalsePieceVerdict(BaseModel):
+    is_false_piece: bool = Field(..., description="True if the file is likely dead code.")
+
 
 class FalsePieceAgent(BaseAgent):
     """
@@ -142,17 +147,19 @@ class FalsePieceAgent(BaseAgent):
 
     async def _verify_and_propose(self, file_path: Path):
         """Uses an LLM to verify a candidate and proposes it for removal."""
+        schema = FalsePieceVerdict.schema_json(indent=2)
         prompt = (
             f"You are a code maintenance expert. The file '{file_path.relative_to(self.source_root)}' "
             "is not referenced by any other Python file in the project.\n\n"
             "Is this file likely to be dead or unused code that can be safely deleted?\n\n"
-            "Respond with a single JSON object with one key:\n"
-            '1. "is_false_piece": boolean (true if it is likely dead code, false otherwise)'
+            "Respond with a single JSON object that conforms to the following JSON Schema:\n"
+            f"```json\n{schema}\n```\n"
+            "Do not add any commentary or markdown formatting around the JSON."
         )
         try:
             response_text = await self.llm_client.chat([{"role": "user", "content": prompt}])
-            verdict = orjson.loads(response_text)
-            if verdict.get("is_false_piece") is True:
+            verdict = FalsePieceVerdict.parse_raw(response_text)
+            if verdict.is_false_piece:
                 logger.warning(f"False piece detected: {file_path}. Proposing for removal.")
 
                 proposal_message = Message(
@@ -161,5 +168,7 @@ class FalsePieceAgent(BaseAgent):
                 )
                 await self.publish(MsgType.PROPOSE_REMOVAL.value, proposal_message)
 
+        except ValidationError as e:
+            logger.error(f"FalsePieceAgent failed to validate Pydantic model for {file_path}: {e}\nResponse: {response_text}")
         except Exception as e:
             logger.error(f"FalsePieceAgent LLM call failed for {file_path}: {e}")

@@ -4,7 +4,8 @@ import os
 import re
 import orjson
 import libcst as cst
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+from pydantic import BaseModel, Field, ValidationError
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -31,6 +32,11 @@ class _SymbolCollector(cst.CSTVisitor):
 
     def visit_ClassDef(self, node: cst.ClassDef) -> None:
         self.symbols[node.name.value] = node
+
+
+class MisfitVerdict(BaseModel):
+    misfit: bool = Field(..., description="True if the symbol is a misfit, false otherwise.")
+    suggestion: Optional[str] = Field(None, description="If a misfit, a better file path.")
 
 
 class MisfitAgent(BaseAgent):
@@ -94,6 +100,8 @@ class MisfitAgent(BaseAgent):
     async def _check_symbol_placement(self, file_path: str, symbol: str):
         # Create a summary of the project structure to give the LLM context
         project_structure = "\n".join(self.project.get_all_files())
+
+        schema = MisfitVerdict.schema_json(indent=2)
         prompt = (
             f"You are an expert software architect. Your task is to determine if a symbol "
             f"(a function or class) is located in the correct file within a project.\n\n"
@@ -103,37 +111,29 @@ class MisfitAgent(BaseAgent):
             "Based on standard software engineering principles (e.g., separation of concerns, "
             "high cohesion, single responsibility), does this symbol semantically belong in this file? "
             "A 'misfit' is a symbol that would be better placed in a different existing file or in a new file.\n\n"
-            "Respond with a single, raw JSON object with two keys:\n"
-            '1. "misfit": boolean (true if it is a misfit, false otherwise)\n'
-            '2. "suggestion": string (if a misfit, suggest a better file path, e.g., "pforge/utils/helpers.py"; otherwise null). '
+            "Respond with a single, raw JSON object that conforms to the following JSON Schema:\n"
+            f"```json\n{schema}\n```\n"
             "Do not add any commentary or markdown formatting around the JSON."
         )
 
         try:
             response_text = await self.llm_client.chat([{"role": "user", "content": prompt}])
+            verdict = MisfitVerdict.parse_raw(response_text)
 
-            # Basic check for JSON structure before parsing
-            if not response_text.strip().startswith("{") or not response_text.strip().endswith("}"):
-                logger.warning(f"MisfitAgent LLM response for symbol '{symbol}' was not valid JSON: {response_text}")
-                return
-
-            verdict = orjson.loads(response_text)
-            if verdict.get("misfit") is True:
-                suggestion = verdict.get("suggestion")
-                logger.warning(f"Misfit detected: '{symbol}' in '{file_path}'. Suggested path: {suggestion}")
+            if verdict.misfit:
+                logger.warning(f"Misfit detected: '{symbol}' in '{file_path}'. Suggested path: {verdict.suggestion}")
 
                 misfit_message = Message(
-                    type="misfit.detected", # New MsgType
+                    type=MsgType.MISFIT_DETECTED,
                     payload={
                         "file_path": file_path,
                         "symbol": symbol,
-                        "suggestion": suggestion,
+                        "suggestion": verdict.suggestion,
                     }
                 )
-                # This message type needs to be defined in signals.py and handled somewhere
-                # await self.publish("misfit.detected", misfit_message)
+                await self.publish(misfit_message.type.value, misfit_message)
 
-        except orjson.JSONDecodeError as e:
-            logger.error(f"MisfitAgent failed to parse JSON response for symbol '{symbol}': {e}\nResponse: {response_text}")
+        except ValidationError as e:
+            logger.error(f"MisfitAgent failed to validate Pydantic model for symbol '{symbol}': {e}\nResponse: {response_text}")
         except Exception as e:
             logger.error(f"MisfitAgent LLM call or other processing failed for symbol '{symbol}': {e}")

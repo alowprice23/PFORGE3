@@ -32,7 +32,15 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
     Tests that the PredictorAgent updates its risk model in the DB and that
     this learned risk affects the effort distribution sent to the Planner.
     """
+    # Set a seed for numpy to make the test deterministic
+    np.random.seed(0)
+
     bus = InMemoryBus()
+
+    # Create a dummy file for path inference to find
+    (mock_project.root / "pforge").mkdir()
+    (mock_project.root / "pforge" / "some_feature.py").touch()
+
 
     # === Part 1: Initial failure with default risk ===
 
@@ -81,8 +89,10 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
     updated_effort_dist = second_analysis_msg.payload['effort_distribution']
     updated_mean_effort = np.mean(updated_effort_dist)
 
-    # 8. Assert that the mean effort is now higher due to learned risk
-    assert updated_mean_effort > initial_mean_effort
+    # 8. Assert that the mean effort is now HIGHER due to learned risk (higher beta -> higher mean)
+    assert updated_mean_effort > initial_mean_effort, \
+        "Mean effort should increase with higher perceived risk (more failures)"
+
 
     # === Part 3: Ensure Planner still works (light check) ===
     planner = PlannerAgent(bus, mock_config, mock_project)

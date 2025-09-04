@@ -57,15 +57,16 @@ class RiskModelDB:
         """
         current_params = self.get_risk_params(file_path)
 
-        # A higher beta (rate) should mean lower risk (lower mean effort).
-        # So, success increases beta, failure decreases it.
+        # The effort is modeled by Gamma(shape=beta, scale=alpha).
+        # A higher beta means higher risk (more failures) and thus higher mean effort.
         if success:
+            # On success, decrease beta (risk), but not below a floor.
             new_alpha = current_params['alpha']
-            new_beta = current_params['beta'] + 0.5 # Increase rate on success
-        else:
-            new_alpha = current_params['alpha']
-            # Decrease rate on failure, but clamp to avoid zero or negative.
             new_beta = max(0.1, current_params['beta'] - 0.5)
+        else:
+            # On failure, increase beta (risk).
+            new_alpha = current_params['alpha']
+            new_beta = current_params['beta'] + 0.5
         cursor = self.conn.cursor()
         # Use INSERT OR REPLACE (UPSERT) to handle both cases
         cursor.execute(

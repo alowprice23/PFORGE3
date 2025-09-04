@@ -40,8 +40,8 @@ class OpenAIClient:
         """
         if not self.client:
             logger.info("Simulating OpenAI call (offline mode).")
-            # The FixerAgent expects a python markdown block.
-            return "```python\ndef my_buggy_function():\n    return 2\n```"
+            # The FixerAgent's prompt asks for a raw JSON object.
+            return '{"corrected_code": "def my_buggy_function():\\n    return 2\\n"}'
 
         # Estimate token usage for budget check
         # A more accurate tokenizer would be better, but this is a reasonable proxy.

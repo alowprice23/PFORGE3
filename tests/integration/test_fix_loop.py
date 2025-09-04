@@ -44,9 +44,13 @@ def e2e_project():
 
         yield project_dir
 
+from unittest.mock import MagicMock
+
+import os
+
 @pytest.mark.asyncio
-@patch("pforge.llm_clients.openai_o3_client.OpenAIClient.chat", new_callable=AsyncMock)
-async def test_e2e_full_loop(mock_llm_chat, e2e_project):
+@patch("os.getenv", return_value="dummy_key")
+async def test_e2e_full_loop(mock_getenv, e2e_project):
     """
     Tests the full end-to-end loop:
     1. Observer detects a failure.
@@ -57,10 +61,6 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     project_dir = e2e_project
     project = Project(project_dir)
     config = Config.load(path=project_dir / "pforge.toml")
-
-    # --- Mock the LLM response ---
-    correct_code = "def my_buggy_function():\n    return 2\n"
-    mock_llm_chat.return_value = correct_code
 
     import xml.etree.ElementTree as ET
 
@@ -77,6 +77,17 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     # --- Setup Orchestrator and listener ---
     orchestrator = Orchestrator(config, project)
     orchestrator.setup_agents()
+
+    # Find the agents we need to mock and patch their clients directly
+    fixer_agent = next(a for a in orchestrator.agents if a.name == "fixer")
+    summarizer_agent = next(a for a in orchestrator.agents if a.name == "summarizer_agent")
+
+    fixer_agent.llm_client = AsyncMock()
+    fixer_agent.llm_client.chat.return_value = '{"corrected_code": "def my_buggy_function():\\n    return 2\\n"}'
+
+    summarizer_agent.llm_client = AsyncMock()
+    summarizer_agent.llm_client.chat.return_value = '{"summary": "This is a summary."}'
+
 
     # We will listen for the final FIX_PATCH_APPLIED signal
     bus = orchestrator.bus
@@ -96,10 +107,14 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
         for testcase in root.iter('testcase'):
             failure = testcase.find('failure')
             if failure is not None:
-                failed_tests.append({
-                    "nodeid": f"{testcase.attrib.get('classname')}.{testcase.attrib.get('name')}",
-                    "traceback": failure.text
-                })
+                # Construct the nodeid in the format pytest uses: path/to/file.py::test_name
+                file_path = testcase.attrib.get('file')
+                test_name = testcase.attrib.get('name')
+                if file_path and test_name:
+                    failed_tests.append({
+                        "nodeid": f"{file_path}::{test_name}",
+                        "traceback": failure.text
+                    })
 
     initial_failed_message = Message(
         type=MsgType.TESTS_FAILED,

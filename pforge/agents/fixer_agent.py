@@ -3,7 +3,8 @@ import logging
 import os
 import re
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+from pydantic import BaseModel, Field, ValidationError
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -23,6 +24,10 @@ if TYPE_CHECKING:
     from pforge.project import Project
 
 logger = logging.getLogger(__name__)
+
+class FixerVerdict(BaseModel):
+    corrected_code: str = Field(..., description="The complete, corrected content of the file.")
+
 
 class FixerAgent(BaseAgent):
     name = "fixer"
@@ -66,6 +71,7 @@ class FixerAgent(BaseAgent):
             await self._handle_fix_task(message.payload)
 
     def _build_prompt(self, file_path: str, description: str, original_content: str, failed_fix_info: dict | None = None) -> str:
+        schema = FixerVerdict.schema_json(indent=2)
         prompt = (
             f"The file '{file_path}' has a bug.\n"
             f"The bug is described as: {description}\n\n"
@@ -83,7 +89,9 @@ class FixerAgent(BaseAgent):
             "Please provide the complete, corrected content of the file. "
             "Only change the necessary code and adhere to the existing coding style. "
             "Do not add any new public APIs. "
-            "Return only the raw file content, enclosed in a single ```python ... ``` block."
+            "Respond with a single JSON object that conforms to the following JSON Schema:\n"
+            f"```json\n{schema}\n```\n"
+            "Do not add any commentary or markdown formatting around the JSON."
         )
         return prompt
 
@@ -113,112 +121,91 @@ class FixerAgent(BaseAgent):
         prompt = self._build_prompt(file_path, description, original_content, failed_fix_info)
 
         logger.info("[FixerLog] Calling LLM...")
-        llm_response = ""
         try:
             llm_response = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
-        except Exception as e:
-            logger.error(f"[FixerLog] LLM call failed: {e}")
-            # Publish a rejection so the orchestrator can retry if needed
+            verdict = FixerVerdict.parse_raw(llm_response)
+            corrected_content = verdict.corrected_code
+        except (ValidationError, Exception) as e:
+            logger.error(f"[FixerLog] LLM call or validation failed: {e}")
             result_msg_type = MsgType.FIX_PATCH_REJECTED
             result_payload = {
                 "file_path": file_path,
                 "description": description,
                 "failed_test_nodeid": failed_test_nodeid,
-                "traceback": f"LLM call failed: {e}",
+                "op_id": op_id,
+                "traceback": f"LLM call or validation failed: {e}",
+                "content": llm_response if 'llm_response' in locals() else "",
             }
-            fix_is_ok = False
-            content_sha_after = content_sha_before
-            verification_result = None
+            # Since the fix failed before verification, we create a minimal proof
+            proof = ProofBundle(
+                tree_sha="dummy_sha",
+                venv_lock_sha="dummy_venv_lock_sha",
+                constraints=[ProofObligation(id="phi.sem.llm_fix_verified", ok=False)],
+                llm_prompt=prompt,
+                llm_response=llm_response if 'llm_response' in locals() else "",
+            )
+            result_message = Message(type=result_msg_type, payload=result_payload)
+            result_message.payload["proof"] = proof.model_dump()
+            await self.publish(result_msg_type.value, result_message)
+            return
+
+        logger.info("[FixerLog] LLM call complete.")
+
+        if not await self.has_capability("fs:write", op_id):
+            logger.error(f"Missing 'fs:write' capability for op_id {op_id}. Aborting fix.")
+            return
+
+        try:
+            self.project.write_file(file_path, corrected_content)
+            content_sha_after = hashlib.sha256(corrected_content.encode()).hexdigest()
+        except IOError as e:
+            logger.error(f"[FixerLog] Failed to write fix to {file_path}: {e}")
+            return
+
+        if not await self.has_capability("exec:test", op_id):
+            logger.error(f"Missing 'exec:test' capability for op_id {op_id}. Aborting verification.")
+            self.project.write_file(file_path, original_content)
+            return
+
+        logger.info(f"[FixerLog] Verifying fix for {file_path} with new validation tools...")
+        changed_files = [self.project.root / file_path]
+        selected_tests = self.test_selector.select_tests(changed_files)
+        test_result = self.test_runner.run(targets=selected_tests) if selected_tests else self.test_runner.run()
+        type_check_result = run_delta_type_check(changed_files, self.dep_graph)
+
+        fix_is_ok = test_result.passed and type_check_result.passed
+        verification_result = test_result
+
+        if fix_is_ok:
+            logger.info(f"[FixerLog] Fix successful for {file_path}")
+            result_msg_type = MsgType.FIX_PATCH_APPLIED
+            result_payload = {
+                "file_path": file_path,
+                "op_id": op_id,
+                "content": corrected_content,
+                "original_content": original_content,
+            }
+            delta_message = Message(type=MsgType.GAP_DELTA, payload={"agent_name": self.name, "value": -1})
+            await self.publish(MsgType.GAP_DELTA.value, delta_message)
+            logger.info("[FixerLog] Published GapDelta signal.")
         else:
-            logger.info("[FixerLog] LLM call complete.")
-
-            match = re.search(r"```python\n(.*?)\n```", llm_response, re.DOTALL)
-            if match:
-                corrected_content = match.group(1).strip()
-            else:
-                logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
-                corrected_content = llm_response
-
-            if not await self.has_capability("fs:write", op_id):
-                logger.error(f"Missing 'fs:write' capability for op_id {op_id}. Aborting fix.")
-                return
-
-            try:
-                self.project.write_file(file_path, corrected_content)
-                content_sha_after = hashlib.sha256(corrected_content.encode()).hexdigest()
-            except IOError as e:
-                logger.error(f"[FixerLog] Failed to write fix to {file_path}: {e}")
-                return
-
-            if not await self.has_capability("exec:test", op_id):
-                logger.error(f"Missing 'exec:test' capability for op_id {op_id}. Aborting verification.")
-                # We can't verify, so we can't proceed. Revert the change.
-                self.project.write_file(file_path, original_content)
-                return
-
-            # Run the full validation suite: targeted tests and delta type check.
-            logger.info(f"[FixerLog] Verifying fix for {file_path} with new validation tools...")
-            changed_files = [self.project.root / file_path]
-
-            # 1. Select and run tests
-            selected_tests = self.test_selector.select_tests(changed_files)
-            if selected_tests is None:
-                logger.info("[FixerLog] Running full test suite.")
-                test_result = self.test_runner.run()
-            else:
-                logger.info(f"[FixerLog] Selected {len(selected_tests)} tests to run.")
-                test_result = self.test_runner.run(targets=selected_tests)
-
-            # 2. Run delta type check
-            logger.info("[FixerLog] Running delta type check...")
-            type_check_result = run_delta_type_check(changed_files, self.dep_graph)
-
-            # 3. Determine if the fix is OK
+            logger.warning(f"[FixerLog] Fix failed for {file_path}")
+            traceback = ""
+            if not test_result.passed:
+                traceback += f"--- Test Failures ---\n{test_result.stdout}\n{test_result.stderr}\n\n"
             if not type_check_result.passed:
-                logger.warning(f"[FixerLog] MyPy check failed. stdout:\n{type_check_result.stdout}\nstderr:\n{type_check_result.stderr}")
-
-            fix_is_ok = test_result.passed and type_check_result.passed
-            verification_result = test_result # For proof bundle
-
-            if fix_is_ok:
-                logger.info(f"[FixerLog] Fix successful for {file_path}")
-                result_msg_type = MsgType.FIX_PATCH_APPLIED
-                result_payload = {
-                    "file_path": file_path,
-                    "op_id": op_id,
-                    "content": corrected_content,
-                    "original_content": original_content,
-                }
-
-                # Publish a delta signal indicating one gap has been closed.
-                delta_message = Message(
-                    type=MsgType.GAP_DELTA,
-                    payload={"agent_name": self.name, "value": -1}
-                )
-                await self.publish(MsgType.GAP_DELTA.value, delta_message)
-                logger.info("[FixerLog] Published GapDelta signal.")
-            else:
-                logger.warning(f"[FixerLog] Fix failed for {file_path}")
-                # Combine test and type check results for a comprehensive traceback.
-                traceback = ""
-                if not test_result.passed:
-                    traceback += f"--- Test Failures ---\n{test_result.stdout}\n{test_result.stderr}\n\n"
-                if not type_check_result.passed:
-                    traceback += f"--- Type Check Failures ---\n{type_check_result.stdout}\n"
-
-                result_msg_type = MsgType.FIX_PATCH_REJECTED
-                result_payload = {
-                    "file_path": file_path,
-                    "description": description,
-                    "failed_test_nodeid": failed_test_nodeid,
-                    "op_id": op_id,
-                    "traceback": traceback.strip(),
-                    "content": corrected_content, # Add the failed patch content
-                }
-                self.last_applied_patch = None
-                # Revert the failed patch
-                self.project.write_file(file_path, original_content)
-                content_sha_after = content_sha_before
+                traceback += f"--- Type Check Failures ---\n{type_check_result.stdout}\n"
+            result_msg_type = MsgType.FIX_PATCH_REJECTED
+            result_payload = {
+                "file_path": file_path,
+                "description": description,
+                "failed_test_nodeid": failed_test_nodeid,
+                "op_id": op_id,
+                "traceback": traceback.strip(),
+                "content": corrected_content,
+            }
+            self.project.write_file(file_path, original_content)
+            content_sha_after = content_sha_before
 
         proof = ProofBundle(
             tree_sha="dummy_sha",

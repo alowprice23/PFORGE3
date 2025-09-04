@@ -28,7 +28,7 @@ def test_agent(mock_bus, mock_config):
     # Mock the priority calculation to be predictable
     with patch('pforge.agents.planner_agent.calculate_priority') as mock_calc:
         # Make priority directly proportional to impact
-        mock_calc.side_effect = lambda impact, freq, eff: impact
+        mock_calc.side_effect = lambda impact, freq, eff, **kwargs: impact
         yield agent
 
 @pytest.mark.asyncio

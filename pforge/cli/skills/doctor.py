@@ -41,9 +41,10 @@ async def run_doctor_flow(project_path: Path, test_node_id: str | None = None):
 
     if success:
         typer.echo("✅ Doctor workflow complete: Puzzle solved!")
+        return True
     else:
         typer.echo("❌ Doctor workflow failed: Could not solve the puzzle.")
-        raise typer.Exit(code=1)
+        return False
 
 
 @app.command()
@@ -66,7 +67,9 @@ def run(
     Analyzes a project, proposes a fix for a bug, and applies it.
     """
     try:
-        asyncio.run(run_doctor_flow(project_path, test_node_id))
+        success = asyncio.run(run_doctor_flow(project_path, test_node_id))
+        if not success:
+            raise typer.Exit(code=1)
     except KeyboardInterrupt:
         typer.echo("\nGracefully shutting down pForge Doctor...")
     except Exception as e:

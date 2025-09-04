@@ -1,6 +1,8 @@
 from __future__ import annotations
 import logging
 import os
+from typing import Optional
+from pydantic import BaseModel, Field, ValidationError
 
 from pforge.agents.base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType
@@ -9,6 +11,9 @@ from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.messaging.in_memory_bus import InMemoryBus
 
 logger = logging.getLogger(__name__)
+
+class SummaryVerdict(BaseModel):
+    summary: str = Field(..., description="A one-sentence summary of the patch.")
 
 class SummarizerAgent(BaseAgent):
     name = "summarizer_agent"
@@ -39,12 +44,21 @@ class SummarizerAgent(BaseAgent):
             file_path = amp_message.payload.get('file_path', 'N/A')
             patch = amp_message.payload.get('patch', 'N/A')
 
+            schema = SummaryVerdict.schema_json(indent=2)
             prompt = (
                 f"Please provide a one-sentence summary of the following patch "
-                f"that was applied to the file '{file_path}':\n\n{patch}"
+                f"that was applied to the file '{file_path}':\n\n{patch}\n\n"
+                "Respond with a single JSON object that conforms to the following JSON Schema:\n"
+                f"```json\n{schema}\n```\n"
+                "Do not add any commentary or markdown formatting around the JSON."
             )
 
-            response = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
-            summary = response.strip()
-
-            logger.info(f"Summary: {summary}")
+            try:
+                response_text = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
+                verdict = SummaryVerdict.parse_raw(response_text)
+                summary = verdict.summary
+                logger.info(f"Summary: {summary}")
+            except ValidationError as e:
+                logger.error(f"SummarizerAgent failed to validate Pydantic model: {e}\nResponse: {response_text}")
+            except Exception as e:
+                logger.error(f"SummarizerAgent LLM call or other processing failed: {e}")

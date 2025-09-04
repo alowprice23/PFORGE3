@@ -34,12 +34,17 @@ def project_with_retry_limit(tmp_path):
 
 
 
+from unittest.mock import MagicMock
+
+import os
+
 @pytest.mark.asyncio
+@patch("os.getenv", return_value="dummy_key")
 @patch("pforge.agents.observer_agent.ObserverAgent.on_tick", new_callable=AsyncMock)
 @patch("pforge.agents.fixer_agent.PytestRunner.run")
-@patch("pforge.llm_clients.openai_o3_client.OpenAIClient.chat", new_callable=AsyncMock)
+@patch("pforge.llm_clients.openai_o3_client.openai.AsyncOpenAI")
 async def test_retry_loop_generates_augmented_prompt_and_stops(
-    mock_llm_chat, mock_pytest_run, mock_observer_on_tick, project_with_retry_limit
+    mock_async_openai, mock_pytest_run, mock_observer_on_tick, mock_getenv, project_with_retry_limit
 ):
     """
     Tests the full retry loop:
@@ -56,8 +61,14 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
     orchestrator = Orchestrator(config, project_with_retry_limit)
     orchestrator.setup_agents()
 
-    # Mock the LLM to always provide a bad fix
-    mock_llm_chat.return_value = "def foo(): return 2 # still wrong"
+    # Mock the LLM to always provide a bad fix that is not valid JSON
+    mock_completion = MagicMock()
+    mock_choice = MagicMock()
+    mock_message = MagicMock()
+    mock_message.content = "def foo(): return 2 # still wrong"
+    mock_choice.message = mock_message
+    mock_completion.choices = [mock_choice]
+    mock_async_openai.return_value.chat.completions.create = AsyncMock(return_value=mock_completion)
 
     # Mock run to always fail
     mock_pytest_run.return_value = PytestRunResult(
@@ -92,7 +103,7 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
         # --- Assert ---
         # The FixerAgent should have been called 3 times:
         # 1 initial attempt + 2 retries (since retry_limit is 2)
-        assert mock_llm_chat.call_count == 3
+        assert mock_async_openai.return_value.chat.completions.create.call_count == 3
 
         # The planner should have published 3 FIX_TASKs
         # 1 initial, 2 for retries

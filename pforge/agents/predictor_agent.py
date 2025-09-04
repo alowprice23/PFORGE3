@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Dict
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
 from pforge.storage.risk_model_db import RiskModelDB
+from pforge.tools.path_utils import infer_source_path_from_test_nodeid
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -65,13 +66,7 @@ class PredictorAgent(BaseAgent):
         if not nodeid:
             return None
 
-        test_file_path = nodeid.split("::")[0]
-
-        if "tests/unit/" in test_file_path:
-            return test_file_path.replace("tests/unit/", "").replace("test_", "")
-        elif "tests/integration/" in test_file_path:
-             return test_file_path.replace("tests/integration/", "").replace("test_", "")
-        return None
+        return infer_source_path_from_test_nodeid(nodeid, self.project)
 
     async def _handle_failure_and_assess_risk(self, payload: dict):
         failed_tests = payload.get("failed_tests", [])
@@ -90,17 +85,23 @@ class PredictorAgent(BaseAgent):
         alpha = params["alpha"]
         beta = params["beta"]
 
-        effort_distribution = np.random.gamma(shape=alpha, scale=1/beta, size=100)
+        # Effort is modeled by a Gamma distribution. We want the mean effort (alpha * beta)
+        # to increase with the number of failures (beta).
+        effort_distribution = np.random.gamma(shape=beta, scale=alpha, size=100)
+
+        # Risk score should increase with beta. A simple probability measure.
+        risk_score = 1 - (alpha / (alpha + beta + 1e-6))
 
         logger.info(f"Assessed risk for failure in '{source_path}'. Effort distribution generated "
-                    f"with alpha={alpha}, beta={beta}.")
+                    f"with alpha={alpha}, beta={beta}. Risk score: {risk_score:.2f}")
 
         analyzed_task_msg = Message(
             type=MsgType.TASK_ANALYZED,
             payload={
                 "original_failure": payload,
                 "effort_distribution": effort_distribution,
-                "inferred_source_path": source_path
+                "inferred_source_path": source_path,
+                "risk_score": risk_score,
             }
         )
         await self.publish(MsgType.TASK_ANALYZED.value, analyzed_task_msg)

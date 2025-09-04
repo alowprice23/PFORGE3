@@ -30,3 +30,5 @@ numpy==1.26.4
 pulp==2.8.0
 PyYAML==6.0.1
 pysat==3.2.2
+toml==0.10.2
+pytest-timeout==2.1.0

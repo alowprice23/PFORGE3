@@ -114,7 +114,10 @@ class ConflictDetectorAgent(BaseAgent):
                         self.conflict_sets[conflict_key] = conflict_set
                         logger.info(f"Found semantic conflict between {failed_op_id} and {other_op_id} on symbols "
                                     f"{modified_symbols_a.intersection(modified_symbols_b)}. Adding conflict set: {conflict_set}")
-                        await self._compute_and_publish_hitting_set()
+
+            # After checking all other patches, compute the hitting set once.
+            if self.conflict_sets:
+                 await self._compute_and_publish_hitting_set()
 
 
     async def _compute_and_publish_hitting_set(self):
