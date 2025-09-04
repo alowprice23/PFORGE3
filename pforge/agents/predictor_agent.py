@@ -68,9 +68,9 @@ class PredictorAgent(BaseAgent):
         test_file_path = nodeid.split("::")[0]
 
         if "tests/unit/" in test_file_path:
-            return test_file_path.replace("tests/unit/", "pforge/").replace("test_", "")
+            return test_file_path.replace("tests/unit/", "").replace("test_", "")
         elif "tests/integration/" in test_file_path:
-             return test_file_path.replace("tests/integration/", "pforge/").replace("test_", "")
+             return test_file_path.replace("tests/integration/", "").replace("test_", "")
         return None
 
     async def _handle_failure_and_assess_risk(self, payload: dict):

@@ -6,6 +6,7 @@ from pysat.examples.hitman import Hitman
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
+from pforge.tools.ast_utils import find_modified_symbols
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -30,8 +31,8 @@ class ConflictDetectorAgent(BaseAgent):
 
         # Stores the sets of op_ids that fail a spec check together.
         self.conflict_sets: Dict[str, Set[str]] = {}
-        # Stores which op_id corresponds to which file.
-        self.active_patches: Dict[str, str] = {} # op_id -> file_path
+        # Stores which op_id corresponds to which file and content.
+        self.active_patches: Dict[str, dict] = {} # op_id -> {file_path: str, content: str, original_content: str}
 
     def _reset_state(self):
         """Resets the conflict detection state."""
@@ -50,35 +51,71 @@ class ConflictDetectorAgent(BaseAgent):
         if msg_type == MsgType.FIX_PATCH_APPLIED:
             op_id = payload.get("op_id")
             file_path = payload.get("file_path")
-            if op_id and file_path:
-                self.active_patches[op_id] = file_path
+            content = payload.get("content")
+            original_content = payload.get("original_content")
+
+            if op_id and file_path and content and original_content:
+                self.active_patches[op_id] = {
+                    "file_path": file_path,
+                    "content": content,
+                    "original_content": original_content,
+                }
                 logger.info(f"Tracking active patch: op_id={op_id} for file={file_path}")
 
         elif msg_type == MsgType.TESTS_PASSED:
             self._reset_state()
 
         elif msg_type == MsgType.SPEC_CHECKED and not payload.get("is_valid"):
-            op_id = payload.get("op_id")
-            if not op_id:
+            failed_op_id = payload.get("op_id")
+            if not failed_op_id or failed_op_id not in self.active_patches:
                 return
 
-            # A spec check failed for the file modified by op_id.
-            # The conflict set is this op_id plus all other active op_ids.
-            # This assumes any active patch could be in conflict.
-            conflict_set = set(self.active_patches.keys())
+            logger.info(f"Spec check failed for op_id: {failed_op_id}. Analyzing for semantic conflicts.")
 
-            if not conflict_set:
-                logger.warning("Spec check failed, but no active patches to blame.")
+            failed_patch = self.active_patches[failed_op_id]
+            failed_file = failed_patch["file_path"]
+
+            try:
+                modified_symbols_a = find_modified_symbols(
+                    failed_patch["original_content"], failed_patch["content"]
+                )
+            except Exception as e:
+                logger.error(f"Could not parse AST for failed patch {failed_op_id}: {e}")
                 return
 
-            check_name = payload.get("checks", [{}])[0].get("check", "unknown")
-            failed_file = payload.get("file_path")
-            conflict_key = f"{check_name}:{failed_file}:{op_id}"
+            if not modified_symbols_a:
+                logger.warning(f"No modified symbols found for failed patch {failed_op_id}. Cannot determine conflict.")
+                return
 
-            if conflict_key not in self.conflict_sets:
-                self.conflict_sets[conflict_key] = conflict_set
-                logger.info(f"Added conflict set '{conflict_key}' with op_ids: {conflict_set}")
-                await self._compute_and_publish_hitting_set()
+            logger.info(f"Op {failed_op_id} modified symbols: {modified_symbols_a} in {failed_file}")
+
+            # Find other patches that modify the same file and the same symbols.
+            for other_op_id, other_patch in self.active_patches.items():
+                if other_op_id == failed_op_id or other_patch["file_path"] != failed_file:
+                    continue
+
+                try:
+                    modified_symbols_b = find_modified_symbols(
+                        other_patch["original_content"], other_patch["content"]
+                    )
+                except Exception as e:
+                    logger.error(f"Could not parse AST for other patch {other_op_id}: {e}")
+                    continue
+
+                logger.info(f"Op {other_op_id} modified symbols: {modified_symbols_b} in {failed_file}")
+
+                # If the intersection of modified symbols is not empty, we have a conflict.
+                if modified_symbols_a.intersection(modified_symbols_b):
+                    conflict_set = {failed_op_id, other_op_id}
+                    # Use a sorted tuple for a canonical key
+                    conflict_key = ":".join(sorted(list(conflict_set)))
+
+                    if conflict_key not in self.conflict_sets:
+                        self.conflict_sets[conflict_key] = conflict_set
+                        logger.info(f"Found semantic conflict between {failed_op_id} and {other_op_id} on symbols "
+                                    f"{modified_symbols_a.intersection(modified_symbols_b)}. Adding conflict set: {conflict_set}")
+                        await self._compute_and_publish_hitting_set()
+
 
     async def _compute_and_publish_hitting_set(self):
         if not self.conflict_sets:
@@ -92,7 +129,7 @@ class ConflictDetectorAgent(BaseAgent):
 
         if minimal_hitting_set_ops:
             # The backtracker needs file paths, not op_ids.
-            files_to_revert = {self.active_patches[op_id] for op_id in minimal_hitting_set_ops if op_id in self.active_patches}
+            files_to_revert = {self.active_patches[op_id]["file_path"] for op_id in minimal_hitting_set_ops if op_id in self.active_patches}
 
             if not files_to_revert:
                  logger.error("Computed a hitting set of ops, but could not map them back to files.")

@@ -143,3 +143,58 @@ def edit_distance(tree1: cst.CSTNode, tree2: cst.CSTNode) -> int:
         get_label=_CstNodeAdapter.get_label,
     )
     return int(distance)
+
+
+class _SymbolCollector(cst.CSTVisitor):
+    """
+    A visitor to collect all function and class definitions from a CST.
+    """
+    def __init__(self):
+        self.symbols = {}
+
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+        self.symbols[node.name.value] = node
+
+    def visit_ClassDef(self, node: cst.ClassDef) -> None:
+        self.symbols[node.name.value] = node
+
+
+def find_modified_symbols(code1: str, code2: str) -> set[str]:
+    """
+    Compares two Python source code strings and returns the names of functions
+    and classes that were added, removed, or changed.
+    """
+    try:
+        tree1 = cst.parse_module(code1)
+        tree2 = cst.parse_module(code2)
+    except cst.ParserSyntaxError:
+        # If there's a syntax error, we can't reliably compare.
+        # A safe fallback is to assume the whole file is modified.
+        return {"<file>"}
+
+    collector1 = _SymbolCollector()
+    collector2 = _SymbolCollector()
+    tree1.visit(collector1)
+    tree2.visit(collector2)
+
+    symbols1 = collector1.symbols
+    symbols2 = collector2.symbols
+
+    modified_symbols = set()
+
+    # Find added and changed symbols
+    for name, node2 in symbols2.items():
+        if name not in symbols1:
+            modified_symbols.add(name)
+        else:
+            node1 = symbols1[name]
+            # .deep_equals() is a reliable way to check for semantic identity
+            if not node1.deep_equals(node2):
+                modified_symbols.add(name)
+
+    # Find removed symbols
+    for name in symbols1:
+        if name not in symbols2:
+            modified_symbols.add(name)
+
+    return modified_symbols

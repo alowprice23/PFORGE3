@@ -9,6 +9,7 @@ from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
 from pforge.orchestrator.state_bus import StateBus
 from pforge.planner.priority import calculate_priority
+from pforge.planner.solver_ilp import solve_knapsack_ilp
 from pforge.proof.capabilities import issue_token
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class PlannerAgent(BaseAgent):
             logger.info("Task board is empty. Nothing to plan.")
             return
 
-        tasks_to_dispatch = self._select_tasks_with_knapsack()
+        tasks_to_dispatch = self._select_tasks_with_ilp()
 
         if not tasks_to_dispatch:
             logger.info("No tasks selected for dispatch in this cycle.")
@@ -205,28 +206,28 @@ class PlannerAgent(BaseAgent):
         self.task_board[task.id] = task
         logger.info(f"Added new removal task to board: {task.id} with priority {priority:.2f}")
 
-    def _select_tasks_with_knapsack(self) -> List[Task]:
+    def _select_tasks_with_ilp(self) -> List[Task]:
         """
-        Selects the best tasks to dispatch using a greedy knapsack algorithm.
-        This is a classic 0/1 knapsack problem: maximize total priority given a budget of effort.
+        Selects the best tasks to dispatch using an ILP knapsack solver.
         """
-        # Filter out already dispatched tasks
         candidate_tasks = [t for t in self.task_board.values() if t.id not in self.dispatched_tasks]
-
         if not candidate_tasks:
             return []
 
-        # Sort tasks by priority-to-effort ratio (the greedy choice)
-        candidate_tasks.sort(key=lambda t: t.priority / t.effort, reverse=True)
+        items_for_solver = [
+            {"name": task.id, "priority": task.priority, "cost": task.effort}
+            for task in candidate_tasks
+        ]
 
-        selected_tasks = []
-        current_effort = 0
-        for task in candidate_tasks:
-            if current_effort + task.effort <= self.effort_budget_per_tick:
-                selected_tasks.append(task)
-                current_effort += task.effort
+        selected_items = solve_knapsack_ilp(items_for_solver, self.effort_budget_per_tick)
 
-        return selected_tasks
+        if selected_items is None:
+            logger.warning("ILP solver is not available or failed. Falling back to greedy.")
+            # Fallback to greedy can be implemented here if needed. For now, return empty.
+            return []
+
+        selected_task_ids = {item['name'] for item in selected_items}
+        return [task for task in candidate_tasks if task.id in selected_task_ids]
 
     async def _dispatch_task(self, task: Task):
         """Dispatches a single task to the appropriate agent with a capability token."""
@@ -246,6 +247,9 @@ class PlannerAgent(BaseAgent):
                 "description": task.description + f"\n\nTraceback:\n{task.payload.get('traceback','')}",
                 "failed_test_nodeid": nodeid,
             }
+            if "failed_fix_info" in task.payload:
+                fix_payload["failed_fix_info"] = task.payload["failed_fix_info"]
+
             # Grant the FixerAgent the capability to write to this file and run tests
             token = issue_token(actor="fixer", scope=["fs:write", "exec:test"], op_id=op_id)
             fix_payload["capability_token"] = token

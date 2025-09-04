@@ -60,7 +60,7 @@ async def test_planner_creates_tasks_from_events(test_agent, mock_bus):
     assert test_agent.task_board["pforge/legacy/old_util.py"].type == "remove_file"
 
 @pytest.mark.asyncio
-async def test_planner_knapsack_selection(test_agent):
+async def test_planner_ilp_selection(test_agent):
     # Manually create tasks with different priorities and efforts
     test_agent.task_board = {
         "task1": Task(id="task1", type="fix_bug", description="", priority=10.0, effort=8.0, payload={}),
@@ -69,19 +69,14 @@ async def test_planner_knapsack_selection(test_agent):
     }
     test_agent.effort_budget_per_tick = 10.0
 
-    selected_tasks = test_agent._select_tasks_with_knapsack()
+    selected_tasks = test_agent._select_tasks_with_ilp()
 
-    # Greedy choice is based on priority/effort ratio:
-    # task1: 10/8 = 1.25
-    # task2: 8/5 = 1.6
-    # task3: 3/2 = 1.5
-    # So, order should be task2, task3, task1.
-    # With a budget of 10, it should select task2 (cost 5) and task3 (cost 2).
-    # Total effort = 7 <= 10.
-
+    # The optimal solution for this knapsack problem is task1 and task3,
+    # with a total priority of 13 and total effort of 10.
+    # The greedy solution would have picked task2 and task3 (priority 11, effort 7).
     assert len(selected_tasks) == 2
     selected_ids = {t.id for t in selected_tasks}
-    assert "task2" in selected_ids
+    assert "task1" in selected_ids
     assert "task3" in selected_ids
 
 @pytest.mark.asyncio
@@ -95,8 +90,8 @@ async def test_planner_dispatches_task_with_token(test_agent, mock_bus):
     # Add the task to the board so the initial check doesn't fail
     test_agent.task_board[fix_task.id] = fix_task
 
-    # Mock the knapsack to return this one task
-    with patch.object(test_agent, '_select_tasks_with_knapsack', return_value=[fix_task]):
+    # Mock the ILP solver to return this one task
+    with patch.object(test_agent, '_select_tasks_with_ilp', return_value=[fix_task]):
         # Mock the update task board to do nothing
         with patch.object(test_agent, '_update_task_board', new_callable=AsyncMock):
             await test_agent.on_tick()

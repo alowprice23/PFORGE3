@@ -29,7 +29,7 @@ def mock_config_with_spec():
         "disallowed_imports": {
             "enabled": True,
             "rules": [
-                {"from": "pforge.agents", "disallow": "pforge.server"}
+                {"from": "pforge.agents.*", "disallow": "pforge.server"}
             ]
         }
     }

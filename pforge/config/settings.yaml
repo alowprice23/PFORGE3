@@ -37,7 +37,9 @@ specifications:
     # The SpecOracleAgent will need specific logic to handle this.
     enabled: true
     rules:
-      - from: "pforge.agents"
+      - from: "pforge.agents.*"
         disallow: "pforge.server"
-      - from: "pforge.models"
+      - from: "pforge.agents.*"
+        disallow: "pforge.storage"
+      - from: "pforge.models.*"
         disallow: "pforge.agents"

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Any
 
 import libcst as cst
+import fnmatch
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
 from pforge.tools.ast_utils import find_disallowed_imports
@@ -116,7 +117,22 @@ class SpecOracleAgent(BaseAgent):
         if not rules:
             return {"check": "disallowed_imports", "passed": True, "output": "No rules configured."}
 
-        disallowed_list = [rule.get("disallow") for rule in rules if rule.get("disallow")]
+        # Convert file path to a module-like string for matching
+        file_module_path = str(file_path.relative_to(self.source_root)).replace("/", ".").replace(".py", "")
+
+        disallowed_list = []
+        for rule in rules:
+            from_pattern = rule.get("from")
+            disallow_module = rule.get("disallow")
+            if not from_pattern or not disallow_module:
+                continue
+
+            if fnmatch.fnmatch(file_module_path, from_pattern):
+                disallowed_list.append(disallow_module)
+
+        if not disallowed_list:
+            # No rules matched this file path
+            return {"check": "disallowed_imports", "passed": True, "output": "OK"}
 
         try:
             content = file_path.read_text()

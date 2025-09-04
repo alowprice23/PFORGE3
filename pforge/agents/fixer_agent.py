@@ -174,13 +174,21 @@ class FixerAgent(BaseAgent):
             type_check_result = run_delta_type_check(changed_files, self.dep_graph)
 
             # 3. Determine if the fix is OK
+            if not type_check_result.passed:
+                logger.warning(f"[FixerLog] MyPy check failed. stdout:\n{type_check_result.stdout}\nstderr:\n{type_check_result.stderr}")
+
             fix_is_ok = test_result.passed and type_check_result.passed
             verification_result = test_result # For proof bundle
 
             if fix_is_ok:
                 logger.info(f"[FixerLog] Fix successful for {file_path}")
                 result_msg_type = MsgType.FIX_PATCH_APPLIED
-                result_payload = {"file_path": file_path, "op_id": op_id}
+                result_payload = {
+                    "file_path": file_path,
+                    "op_id": op_id,
+                    "content": corrected_content,
+                    "original_content": original_content,
+                }
 
                 # Publish a delta signal indicating one gap has been closed.
                 delta_message = Message(
@@ -205,6 +213,7 @@ class FixerAgent(BaseAgent):
                     "failed_test_nodeid": failed_test_nodeid,
                     "op_id": op_id,
                     "traceback": traceback.strip(),
+                    "content": corrected_content, # Add the failed patch content
                 }
                 self.last_applied_patch = None
                 # Revert the failed patch
