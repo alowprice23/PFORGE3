@@ -2,8 +2,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Dict, Set, List
 
-from pysat.examples.hitman import Hitman
-
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
 from pforge.tools.ast_utils import find_modified_symbols
@@ -121,21 +119,34 @@ class ConflictDetectorAgent(BaseAgent):
         if not self.conflict_sets:
             return
 
-        hyperedges: List[List[str]] = [list(s) for s in self.conflict_sets.values()]
+        uncovered_sets = list(self.conflict_sets.values())
+        hitting_set = set()
 
-        with Hitman(bootstrap_with=hyperedges, htype='sorted') as h:
-            # We want the minimal set of op_ids to revert.
-            minimal_hitting_set_ops = h.get()
+        while uncovered_sets:
+            # Find the element that appears in the most uncovered sets
+            element_counts = {}
+            for s in uncovered_sets:
+                for element in s:
+                    if element not in hitting_set:
+                        element_counts[element] = element_counts.get(element, 0) + 1
 
-        if minimal_hitting_set_ops:
-            # The backtracker needs file paths, not op_ids.
-            files_to_revert = {self.active_patches[op_id]["file_path"] for op_id in minimal_hitting_set_ops if op_id in self.active_patches}
+            if not element_counts:
+                break
+
+            best_element = max(element_counts, key=element_counts.get)
+            hitting_set.add(best_element)
+
+            # Remove sets covered by the new element
+            uncovered_sets = [s for s in uncovered_sets if best_element not in s]
+
+        if hitting_set:
+            files_to_revert = {self.active_patches[op_id]["file_path"] for op_id in hitting_set if op_id in self.active_patches}
 
             if not files_to_revert:
                  logger.error("Computed a hitting set of ops, but could not map them back to files.")
                  return
 
-            logger.info(f"Computed minimal hitting set of files to revert: {files_to_revert}")
+            logger.info(f"Computed hitting set of files to revert: {files_to_revert}")
 
             analysis_message = Message(
                 type=MsgType.CONFLICT_ANALYZED,
@@ -143,4 +154,4 @@ class ConflictDetectorAgent(BaseAgent):
             )
             await self.publish(MsgType.CONFLICT_ANALYZED.value, analysis_message)
         else:
-            logger.warning("Could not compute a minimal hitting set.")
+            logger.warning("Could not compute a hitting set.")

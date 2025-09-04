@@ -17,16 +17,13 @@ def doctor_e2e_project():
 
         (project_dir / "pforge.toml").write_text("[doctor]\nretry_limit = 1\n")
 
-        source_dir = project_dir / "pforge"
-        source_dir.mkdir()
-        (source_dir / "__init__.py").touch()
-        (source_dir / "buggy.py").write_text("def my_buggy_function():\n    return 1\n")
+        (project_dir / "buggy.py").write_text("def my_buggy_function():\n    return 1\n")
 
         tests_dir = project_dir / "tests"
         tests_dir.mkdir()
         (tests_dir / "__init__.py").touch()
         (tests_dir / "test_buggy.py").write_text(
-            "from pforge.buggy import my_buggy_function\n\n"
+            "from buggy import my_buggy_function\n\n"
             "def test_bug():\n"
             "    assert my_buggy_function() == 2\n"
         )
@@ -59,17 +56,15 @@ def test_doctor_command_e2e(mock_openai_client, doctor_e2e_project):
     # --- Run the doctor command ---
     command = [
         sys.executable,
-        "-m",
-        "pforge.cli.main",
+                "-m",
+                "pforge.cli.main",
         "doctor",
         "run",
-        ".",
+            str(project_dir),
         "--test-node-id",
         "tests/test_buggy.py::test_bug",
     ]
 
-    # We need to set the OPENAI_API_KEY for the FixerAgent to be created.
-    env = {"OPENAI_API_KEY": "dummy"}
 
     log_path = project_dir / "doctor.log"
     result = None
@@ -83,8 +78,6 @@ def test_doctor_command_e2e(mock_openai_client, doctor_e2e_project):
                 stdout=f,
                 stderr=subprocess.STDOUT,
                 text=True,
-                cwd=project_dir,
-                env=env,
                 timeout=30  # A short timeout is fine.
             )
     except subprocess.TimeoutExpired:
@@ -106,3 +99,5 @@ def test_doctor_command_e2e(mock_openai_client, doctor_e2e_project):
 
     # We do not verify the final state because the test is designed to
     # time out before the fix is applied and verified.
+    # The main purpose is to ensure the command runs without crashing.
+    assert "Orchestrator finished." in log_content

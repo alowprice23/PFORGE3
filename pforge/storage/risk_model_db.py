@@ -56,6 +56,7 @@ class RiskModelDB:
         of an edit. If the file does not exist, it is inserted first.
         """
         current_params = self.get_risk_params(file_path)
+        logger.info(f"Updating risk for {file_path}. Current params: {current_params}")
 
         # A higher beta (rate) should mean lower risk (lower mean effort).
         # So, success increases beta, failure decreases it.
@@ -66,6 +67,8 @@ class RiskModelDB:
             new_alpha = current_params['alpha']
             # Decrease rate on failure, but clamp to avoid zero or negative.
             new_beta = max(0.1, current_params['beta'] - 0.5)
+
+        logger.info(f"New params for {file_path}: alpha={new_alpha}, beta={new_beta}")
         cursor = self.conn.cursor()
         # Use INSERT OR REPLACE (UPSERT) to handle both cases
         cursor.execute(

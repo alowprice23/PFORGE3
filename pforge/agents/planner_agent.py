@@ -30,6 +30,7 @@ class Task:
     effort: float  # Estimated effort (cost)
     payload: Dict[str, Any]
     retry_count: int = 0
+    source_path: str | None = None # The path to the source file to be modified
 
 
 class PlannerAgent(BaseAgent):
@@ -41,7 +42,8 @@ class PlannerAgent(BaseAgent):
         self.state_bus = StateBus(bus)
         self.task_board: Dict[str, Task] = {}
         self.dispatched_tasks: set[str] = set()
-        self.effort_budget_per_tick = 10.0 # An arbitrary budget
+        self.conflicted_files: set[str] = set()
+        self.effort_budget_per_tick = 30.0 # An arbitrary budget, increased to handle high-effort tasks
 
         # Subscribe to events that can create or resolve tasks
         self.bus.subscribe(self.name, MsgType.METRICS_UPDATED.value)
@@ -49,6 +51,9 @@ class PlannerAgent(BaseAgent):
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_REJECTED.value) # To trigger retries
         self.bus.subscribe(self.name, MsgType.PROPOSE_REMOVAL.value)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
+        self.bus.subscribe(self.name, MsgType.MISFIT_DETECTED.value)
+        self.bus.subscribe(self.name, MsgType.CONFLICT_ANALYZED.value)
+        self.bus.subscribe(self.name, MsgType.TESTS_PASSED.value)
 
     async def on_tick(self):
         """
@@ -92,12 +97,22 @@ class PlannerAgent(BaseAgent):
                 self._add_removal_task(message.payload)
             elif message.type == MsgType.FIX_PATCH_APPLIED:
                 self._handle_fix_success(message.payload)
+            elif message.type == MsgType.MISFIT_DETECTED:
+                self._add_refactor_task_from_misfit(message.payload)
+            elif message.type == MsgType.CONFLICT_ANALYZED:
+                self.conflicted_files.update(payload.get("minimal_hitting_set", []))
+                logger.info(f"Updated conflicted files: {self.conflicted_files}")
+            elif message.type == MsgType.TESTS_PASSED:
+                self.conflicted_files.clear()
+                logger.info("Cleared conflicted files due to successful test run.")
 
     def _add_fix_tasks_from_analysis(self, payload: dict):
         """Create fix tasks from a TASK_ANALYZED event."""
         original_failure = payload.get("original_failure", {})
         failed_tests = original_failure.get("failed_tests", [])
         effort_dist = payload.get("effort_distribution")
+        risk_score = payload.get("risk_score", 0.0)
+        source_path = payload.get("inferred_source_path")
 
         if effort_dist is None:
             logger.error("Received TASK_ANALYZED message without effort distribution.")
@@ -110,7 +125,10 @@ class PlannerAgent(BaseAgent):
 
             impact = 1.0
             frequency = 1.0
-            priority = calculate_priority(impact, frequency, effort_dist)
+            in_conflict = source_path in self.conflicted_files if source_path else False
+            priority = calculate_priority(
+                impact, frequency, effort_dist, risk_score=risk_score, in_conflict=in_conflict
+            )
 
             task = Task(
                 id=nodeid,
@@ -120,6 +138,7 @@ class PlannerAgent(BaseAgent):
                 effort=effort_dist.mean(),
                 payload=failure,  # The payload is the original failure dict
                 retry_count=0,
+                source_path=source_path,
             )
             self.task_board[task.id] = task
             logger.info(f"Added new fix task to board: {task.id} with priority {priority:.2f}")
@@ -193,7 +212,10 @@ class PlannerAgent(BaseAgent):
         frequency = 1.0
         effort_dist = np.array([1.0]) # Simple deletion is low effort
 
-        priority = calculate_priority(impact, frequency, effort_dist)
+        in_conflict = file_path in self.conflicted_files
+        priority = calculate_priority(
+            impact, frequency, effort_dist, in_conflict=in_conflict
+        )
 
         task = Task(
             id=file_path, # Use file path as unique ID
@@ -205,6 +227,38 @@ class PlannerAgent(BaseAgent):
         )
         self.task_board[task.id] = task
         logger.info(f"Added new removal task to board: {task.id} with priority {priority:.2f}")
+
+    def _add_refactor_task_from_misfit(self, payload: dict):
+        """Create a refactoring task from a MISFIT_DETECTED event."""
+        file_path = payload.get("file_path")
+        symbol = payload.get("symbol")
+        suggestion = payload.get("suggestion")
+        task_id = f"refactor:{file_path}:{symbol}"
+
+        if not all([file_path, symbol, suggestion]) or task_id in self.dispatched_tasks:
+            return
+
+        # Refactoring is generally lower impact than fixing a failing test
+        impact = 0.4
+        frequency = 1.0
+        # Effort for refactoring is higher than simple deletion
+        effort_dist = np.array([3.0, 4.0, 5.0])
+
+        in_conflict = file_path in self.conflicted_files
+        priority = calculate_priority(
+            impact, frequency, effort_dist, in_conflict=in_conflict
+        )
+
+        task = Task(
+            id=task_id,
+            type="refactor_code",
+            description=f"Refactor: Move '{symbol}' from '{file_path}' to '{suggestion}'.",
+            priority=priority,
+            effort=effort_dist.mean(),
+            payload=payload,
+        )
+        self.task_board[task.id] = task
+        logger.info(f"Added new refactor task to board: {task.id} with priority {priority:.2f}")
 
     def _select_tasks_with_ilp(self) -> List[Task]:
         """
@@ -235,17 +289,11 @@ class PlannerAgent(BaseAgent):
 
         if task.type == "fix_bug":
             task.payload["op_id"] = op_id
-            # This logic is adapted from the old PlannerAgent
-            nodeid = task.id
-            test_file_path = nodeid.split("::")[0]
-            # This inference logic should be improved or replaced
-            inferred_source_path = test_file_path.replace("tests/", "pforge/").replace("test_", "")
-
             fix_payload = {
                 "op_id": op_id,
-                "file_path": inferred_source_path,
+                "file_path": task.source_path,
                 "description": task.description + f"\n\nTraceback:\n{task.payload.get('traceback','')}",
-                "failed_test_nodeid": nodeid,
+                "failed_test_nodeid": task.id,
             }
             if "failed_fix_info" in task.payload:
                 fix_payload["failed_fix_info"] = task.payload["failed_fix_info"]
@@ -256,7 +304,7 @@ class PlannerAgent(BaseAgent):
 
             message = Message(type=MsgType.FIX_TASK, payload=fix_payload)
             await self.publish(MsgType.FIX_TASK.value, message)
-            logger.info(f"Dispatched FIX_TASK for {inferred_source_path} with op_id {op_id}")
+            logger.info(f"Dispatched FIX_TASK for {task.source_path} with op_id {op_id}")
 
         elif task.type == "remove_file":
             removal_payload = {
@@ -270,3 +318,19 @@ class PlannerAgent(BaseAgent):
             message = Message(type=MsgType.ACCEPT_REMOVAL, payload=removal_payload)
             await self.publish(MsgType.ACCEPT_REMOVAL.value, message)
             logger.info(f"Dispatched ACCEPT_REMOVAL for {removal_payload['file_path']} with op_id {op_id}")
+
+        elif task.type == "refactor_code":
+            refactor_payload = {
+                "op_id": op_id,
+                "file_path": task.payload.get("file_path"),
+                "symbol": task.payload.get("symbol"),
+                "suggestion": task.payload.get("suggestion"),
+                "description": task.description,
+            }
+            # Grant the FixerAgent the capability to write to multiple files and run tests
+            token = issue_token(actor="fixer", scope=["fs:write", "fs:delete", "exec:test"], op_id=op_id)
+            refactor_payload["capability_token"] = token
+
+            message = Message(type=MsgType.REFACTOR_TASK, payload=refactor_payload)
+            await self.publish(MsgType.REFACTOR_TASK.value, message)
+            logger.info(f"Dispatched REFACTOR_TASK for '{refactor_payload['symbol']}' with op_id {op_id}")

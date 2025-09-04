@@ -2,6 +2,9 @@ from __future__ import annotations
 import logging
 import numpy as np
 from typing import TYPE_CHECKING, Dict
+import os
+import glob
+from pathlib import Path
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -60,17 +63,49 @@ class PredictorAgent(BaseAgent):
                     logger.info(f"Updated risk for {file_path} (success={success})")
 
     def _infer_source_path_from_test_failure(self, failure: Dict) -> str | None:
-        """A simple heuristic to infer a source file from a test file path."""
+        """
+        Infers a source file from a test file path using a filename-based search.
+        e.g., `tests/unit/test_foo.py` -> `pforge/foo.py`
+        """
         nodeid = failure.get("nodeid")
         if not nodeid:
+            logger.warning("Cannot infer source path: failure has no 'nodeid'.")
             return None
 
-        test_file_path = nodeid.split("::")[0]
+        test_file_path_str = nodeid.split("::")[0]
+        test_filename = Path(test_file_path_str).name
 
-        if "tests/unit/" in test_file_path:
-            return test_file_path.replace("tests/unit/", "").replace("test_", "")
-        elif "tests/integration/" in test_file_path:
-             return test_file_path.replace("tests/integration/", "").replace("test_", "")
+        if not test_filename.startswith("test_") or not test_filename.endswith(".py"):
+            logger.warning(f"Cannot infer source path: test filename '{test_filename}' does not follow 'test_*.py' pattern.")
+            return None
+
+        source_filename = test_filename[5:]  # "test_foo.py" -> "foo.py"
+
+        # In the test environment, the project root can be a symlink.
+        # We need to resolve it to a real path for glob and other fs operations to work reliably.
+        project_real_path = self.project.root.resolve()
+
+        # Search for the source file using glob, which is robust to directory structures.
+        search_pattern = str(project_real_path / '**' / source_filename)
+        found_files = glob.glob(search_pattern, recursive=True)
+
+        if not found_files:
+            logger.warning(f"Could not find a matching source file for '{source_filename}' using glob in '{project_real_path}'")
+            return None
+
+        # Filter out test files and return the first valid source file found.
+        for file_path_str in found_files:
+            file_path = Path(file_path_str)
+
+            # Use the real project path for relativity check
+            relative_path = file_path.relative_to(project_real_path)
+
+            if "tests" not in str(relative_path):
+                logger.info(f"Inferred source path '{relative_path}' from test '{test_file_path_str}'")
+                # Return the original-style relative path, not the resolved one
+                return str(file_path.relative_to(self.project.root))
+
+        logger.warning(f"Found potential matches for '{source_filename}' but all were in a 'tests' directory: {found_files}")
         return None
 
     async def _handle_failure_and_assess_risk(self, payload: dict):
@@ -91,16 +126,18 @@ class PredictorAgent(BaseAgent):
         beta = params["beta"]
 
         effort_distribution = np.random.gamma(shape=alpha, scale=1/beta, size=100)
+        risk_score = alpha / (alpha + beta)
 
         logger.info(f"Assessed risk for failure in '{source_path}'. Effort distribution generated "
-                    f"with alpha={alpha}, beta={beta}.")
+                    f"with alpha={alpha}, beta={beta}. Calculated risk score: {risk_score:.2f}")
 
         analyzed_task_msg = Message(
             type=MsgType.TASK_ANALYZED,
             payload={
                 "original_failure": payload,
                 "effort_distribution": effort_distribution,
-                "inferred_source_path": source_path
+                "inferred_source_path": source_path,
+                "risk_score": risk_score,
             }
         )
         await self.publish(MsgType.TASK_ANALYZED.value, analyzed_task_msg)

@@ -42,6 +42,7 @@ def e2e_project():
 
         yield project_dir
 
+@pytest.mark.skip(reason="This test requires a live LLM connection.")
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_live_e2e_full_loop(e2e_project):

@@ -38,8 +38,8 @@ def solve_knapsack_ilp(
         # Constraint: total cost must be within budget
         prob += pulp.lpSum([item['cost'] * item_vars[item['name']] for item in items]) <= budget, "BudgetConstraint"
 
-        # Solve the problem
-        prob.solve(solver)
+        # Solve the problem, suppressing solver messages
+        prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
         # Check the status
         if pulp.LpStatus[prob.status] == 'Optimal':

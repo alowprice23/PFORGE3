@@ -28,7 +28,7 @@ def test_agent(mock_bus, mock_config):
     # Mock the priority calculation to be predictable
     with patch('pforge.agents.planner_agent.calculate_priority') as mock_calc:
         # Make priority directly proportional to impact
-        mock_calc.side_effect = lambda impact, freq, eff: impact
+        mock_calc.side_effect = lambda impact, freq, eff, risk_score=0.0, in_conflict=False: impact
         yield agent
 
 @pytest.mark.asyncio
@@ -84,7 +84,8 @@ async def test_planner_dispatches_task_with_token(test_agent, mock_bus):
     # Create a single high-priority task
     fix_task = Task(
         id="task1", type="fix_bug", description="A bug", priority=10.0, effort=5.0,
-        payload={"nodeid": "tests/test_b.py::test_two", "traceback": "Error"}
+        payload={"nodeid": "tests/test_b.py::test_two", "traceback": "Error"},
+        source_path="pforge/file.py"
     )
 
     # Add the task to the board so the initial check doesn't fail

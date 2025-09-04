@@ -23,6 +23,7 @@ class MsgType(str, Enum):
 
     # Planner signals
     TASK_ANALYZED = "task.analyzed"
+    REFACTOR_TASK = "task.refactor"
 
     # Conflict resolution signals
     CONFLICT_ANALYZED = "conflict.analyzed"
