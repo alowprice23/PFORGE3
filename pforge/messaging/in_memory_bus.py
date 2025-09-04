@@ -56,7 +56,7 @@ class InMemoryBus:
             for queue in self.topics[topic]:
                 await queue.put(message)
 
-    async def get(self, subscriber_name: str, timeout: float | None = None) -> Any | None:
+    async def get(self, subscriber_name: str, timeout: float | None = 1.0) -> Any | None:
         """
         Waits for and retrieves a message from a subscriber's personal queue.
         - If timeout is None, it waits forever.
@@ -70,7 +70,7 @@ class InMemoryBus:
                 return queue.get_nowait()
             elif timeout:
                 return await asyncio.wait_for(queue.get(), timeout=timeout)
-            else:
+            else: # timeout is None
                 return await queue.get()
         except asyncio.TimeoutError:
             return None
