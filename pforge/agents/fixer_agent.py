@@ -10,7 +10,12 @@ from pforge.orchestrator.signals import MsgType, Message
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.proof.bundle import ProofBundle, ProofObligation
-from pforge.validation.test_runner import run_tests
+from pforge.validation.dep_graph import DependencyGraph
+from pforge.validation.coverage_index import CoverageIndex
+from pforge.validation.test_runner import PytestRunner
+from pforge.validation.selection import TestSelector
+from pforge.validation.types import run_delta_type_check
+
 
 if TYPE_CHECKING:
     from pforge.config import Config
@@ -39,6 +44,17 @@ class FixerAgent(BaseAgent):
             api_key=os.getenv("OPENAI_API_KEY"),
             budget_meter=budget_meter
         )
+
+        # Initialize the validation tools
+        logger.info("Initializing validation tools for FixerAgent...")
+        self.dep_graph = DependencyGraph(project_root=self.project.root)
+        self.coverage_index = CoverageIndex(project_root=self.project.root)
+        # It's important to load the coverage index. If it doesn't exist,
+        # the selector will just fall back to guard tests.
+        self.coverage_index.load()
+
+        self.test_selector = TestSelector(self.dep_graph, self.coverage_index)
+        self.test_runner = PytestRunner(project_root=self.project.root)
 
     async def on_tick(self):
         message = await self.bus.get(self.name)
@@ -139,15 +155,26 @@ class FixerAgent(BaseAgent):
                 self.project.write_file(file_path, original_content)
                 return
 
-            test_file = failed_test_nodeid.split("::")[0] if failed_test_nodeid else None
-            logger.info(f"[FixerLog] Verifying fix by running tests in: {test_file or 'all tests'}")
+            # Run the full validation suite: targeted tests and delta type check.
+            logger.info(f"[FixerLog] Verifying fix for {file_path} with new validation tools...")
+            changed_files = [self.project.root / file_path]
 
-            verification_result = run_tests(
-                test_nodes=[test_file] if test_file else [],
-                source_root=self.project.root
-            )
+            # 1. Select and run tests
+            selected_tests = self.test_selector.select_tests(changed_files)
+            if selected_tests is None:
+                logger.info("[FixerLog] Running full test suite.")
+                test_result = self.test_runner.run()
+            else:
+                logger.info(f"[FixerLog] Selected {len(selected_tests)} tests to run.")
+                test_result = self.test_runner.run(targets=selected_tests)
 
-            fix_is_ok = verification_result is not None and verification_result.failed == 0
+            # 2. Run delta type check
+            logger.info("[FixerLog] Running delta type check...")
+            type_check_result = run_delta_type_check(changed_files, self.dep_graph)
+
+            # 3. Determine if the fix is OK
+            fix_is_ok = test_result.passed and type_check_result.passed
+            verification_result = test_result # For proof bundle
 
             if fix_is_ok:
                 logger.info(f"[FixerLog] Fix successful for {file_path}")
@@ -163,9 +190,12 @@ class FixerAgent(BaseAgent):
                 logger.info("[FixerLog] Published GapDelta signal.")
             else:
                 logger.warning(f"[FixerLog] Fix failed for {file_path}")
-                traceback = "No verification result."
-                if verification_result and verification_result.report_content:
-                    traceback = verification_result.report_content
+                # Combine test and type check results for a comprehensive traceback.
+                traceback = ""
+                if not test_result.passed:
+                    traceback += f"--- Test Failures ---\n{test_result.stdout}\n{test_result.stderr}\n\n"
+                if not type_check_result.passed:
+                    traceback += f"--- Type Check Failures ---\n{type_check_result.stdout}\n"
 
                 result_msg_type = MsgType.FIX_PATCH_REJECTED
                 result_payload = {
@@ -173,8 +203,10 @@ class FixerAgent(BaseAgent):
                     "description": description,
                     "failed_test_nodeid": failed_test_nodeid,
                     "op_id": op_id,
-                    "traceback": traceback,
+                    "traceback": traceback.strip(),
                 }
+                self.last_applied_patch = None
+                # Revert the failed patch
                 self.project.write_file(file_path, original_content)
                 content_sha_after = content_sha_before
 
@@ -193,4 +225,4 @@ class FixerAgent(BaseAgent):
         result_message.payload["proof"] = proof.model_dump()
 
         logger.info(f"[FixerLog] Publishing {result_msg_type.value} for {file_path}")
-        await self.publish(result_msg_type.value, result_message)
+        await self.publish("orchestrator", result_message)

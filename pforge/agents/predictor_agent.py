@@ -27,6 +27,7 @@ class PredictorAgent(BaseAgent):
         super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
+        self.bus.subscribe(self.name, MsgType.FIX_PATCH_REJECTED.value)
         self.bus.subscribe(self.name, MsgType.BACKTRACK_COMPLETED.value)
 
         self.risk_db = RiskModelDB()
@@ -46,7 +47,7 @@ class PredictorAgent(BaseAgent):
             logger.info("PredictorAgent consumed TESTS_FAILED event. Assessing risk.")
             await self._handle_failure_and_assess_risk(payload)
 
-        elif msg_type in [MsgType.FIX_PATCH_APPLIED, MsgType.BACKTRACK_COMPLETED]:
+        elif msg_type in [MsgType.FIX_PATCH_APPLIED, MsgType.FIX_PATCH_REJECTED, MsgType.BACKTRACK_COMPLETED]:
             # The op_id is now the key to finding the file path for the update
             op_id = payload.get("op_id")
             if op_id:

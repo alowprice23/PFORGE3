@@ -16,16 +16,16 @@ Modules:
 
 from .dep_graph import DependencyGraph
 from .coverage_index import CoverageIndex
-from .selection import select_tests
-from .types import run_delta_typecheck, TypeCheckResult
-from .test_runner import run_tests, TestRunnerResult
+from .selection import TestSelector
+from .types import run_delta_type_check, TypeCheckResult
+from .test_runner import PytestRunner, PytestRunResult
 
 __all__ = [
     "DependencyGraph",
     "CoverageIndex",
-    "select_tests",
-    "run_delta_typecheck",
+    "TestSelector",
+    "run_delta_type_check",
     "TypeCheckResult",
-    "run_tests",
-    "TestRunnerResult",
+    "PytestRunner",
+    "PytestRunResult",
 ]

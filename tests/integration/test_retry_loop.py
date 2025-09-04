@@ -8,7 +8,7 @@ from pforge.config import Config
 from pforge.orchestrator.core import Orchestrator
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
-from pforge.validation.test_runner import TestRunnerResult
+from pforge.validation.test_runner import PytestRunResult
 
 
 @pytest.fixture
@@ -36,10 +36,10 @@ def project_with_retry_limit(tmp_path):
 
 @pytest.mark.asyncio
 @patch("pforge.agents.observer_agent.ObserverAgent.on_tick", new_callable=AsyncMock)
-@patch("pforge.agents.fixer_agent.run_tests")
+@patch("pforge.agents.fixer_agent.PytestRunner.run")
 @patch("pforge.llm_clients.openai_o3_client.OpenAIClient.chat", new_callable=AsyncMock)
 async def test_retry_loop_generates_augmented_prompt_and_stops(
-    mock_llm_chat, mock_run_tests, mock_observer_on_tick, project_with_retry_limit
+    mock_llm_chat, mock_pytest_run, mock_observer_on_tick, project_with_retry_limit
 ):
     """
     Tests the full retry loop:
@@ -59,11 +59,13 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
     # Mock the LLM to always provide a bad fix
     mock_llm_chat.return_value = "def foo(): return 2 # still wrong"
 
-    # Mock run_tests to always fail
-    mock_run_tests.return_value = TestRunnerResult(
-        exit_code=1, passed=0, failed=1, skipped=0, duration_s=1.0,
-        report_hash="dummy_hash", report_content='{"tests": [{"outcome": "failed", "longrepr": "assert 1 == 2"}]}',
-        command=["pytest"]
+    # Mock run to always fail
+    mock_pytest_run.return_value = PytestRunResult(
+        exit_code=1,
+        junit_xml_path=None, # Not needed for this test
+        report_hash="dummy_hash",
+        stdout="dummy stdout",
+        stderr="dummy stderr",
     )
 
     # Spy on the planner's publish method to check the augmented prompt

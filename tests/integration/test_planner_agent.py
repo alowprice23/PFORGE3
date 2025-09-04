@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+import numpy as np
 
 import pytest
 
@@ -42,19 +43,22 @@ async def test_planner_agent_creates_fix_task():
         test_subscriber_name = "test_fix_task_listener"
         bus.subscribe(test_subscriber_name, MsgType.FIX_TASK.value)
 
-        # Simulate a TESTS_FAILED event
-        failed_event = Message(
-            type=MsgType.TESTS_FAILED,
+        # Simulate a TASK_ANALYZED event, which is what the PlannerAgent actually consumes.
+        analyzed_event = Message(
+            type=MsgType.TASK_ANALYZED,
             payload={
-                "failed_tests": [{
-                    "nodeid": "tests/test_buggy_module.py::test_buggy_function_returns_fixed",
-                    "traceback": "AssertionError: assert 'bug' == 'fixed'"
-                }],
-                "passed": 0, "failed": 1, "skipped": 0,
+                "original_failure": {
+                    "failed_tests": [{
+                        "nodeid": "tests/test_buggy_module.py::test_buggy_function_returns_fixed",
+                        "traceback": "AssertionError: assert 'bug' == 'fixed'"
+                    }]
+                },
+                "effort_distribution": np.array([1.0, 2.0, 3.0]),
+                "inferred_source_path": "pforge/buggy_module.py"
             }
         )
         # Publish to the topic the planner is listening on
-        await bus.publish(MsgType.TESTS_FAILED.value, failed_event)
+        await bus.publish(MsgType.TASK_ANALYZED.value, analyzed_event)
 
         # Run the agent's on_tick method to process the message
         await planner.on_tick()

@@ -2,6 +2,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from typing import Dict
+import logging
+
+logger = logging.getLogger(__name__)
 
 # It's good practice to define the default location for the database
 DB_PATH = Path(__file__).parent.parent / "data/pforge.db"
@@ -61,7 +64,6 @@ class RiskModelDB:
             new_alpha = current_params['alpha']
             # Decrease rate on failure, but clamp to avoid zero or negative.
             new_beta = max(0.1, current_params['beta'] - 0.5)
-
         cursor = self.conn.cursor()
         # Use INSERT OR REPLACE (UPSERT) to handle both cases
         cursor.execute(

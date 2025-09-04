@@ -61,12 +61,16 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
 
     # === Part 2: Simulate a failed fix and re-assess risk ===
 
-    # 5. Manually update the risk model to simulate a failed patch for that file
-    predictor.risk_db.update_risk_params(test_file, success=False)
-    predictor.risk_db.update_risk_params(test_file, success=False)
+    # 5. Simulate two failed patches for the same file
+    fix_failed_payload = {"file_path": test_file}
+    await bus.publish(MsgType.FIX_PATCH_REJECTED.value, Message(type=MsgType.FIX_PATCH_REJECTED, payload=fix_failed_payload))
+    await predictor.on_tick()
+    await bus.publish(MsgType.FIX_PATCH_REJECTED.value, Message(type=MsgType.FIX_PATCH_REJECTED, payload=fix_failed_payload))
+    await predictor.on_tick()
 
     # 6. Publish the same failure again
     await bus.publish(MsgType.TESTS_FAILED.value, test_failure_msg)
+    # We don't need to re-initialize the agent, just run its tick again.
     await predictor.on_tick()
 
     # 7. Capture the second analysis

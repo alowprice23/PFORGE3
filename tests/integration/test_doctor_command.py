@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pforge.validation.test_runner import run_tests
+from pforge.validation.test_runner import PytestRunner
 
 
 @pytest.fixture
@@ -50,9 +50,11 @@ def test_doctor_command_e2e(mock_llm_chat, doctor_e2e_project):
     mock_llm_chat.return_value = correct_code
 
     # --- Initial state verification ---
-    initial_result = run_tests(test_nodes=[], source_root=project_dir)
+    test_runner = PytestRunner(project_root=project_dir)
+    initial_result = test_runner.run()
     assert initial_result is not None
-    assert initial_result.failed == 1, "Test should initially fail"
+    _, failed_count, _ = initial_result.get_counts()
+    assert failed_count == 1, "Test should initially fail"
 
     # --- Run the doctor command ---
     command = [
@@ -86,7 +88,8 @@ def test_doctor_command_e2e(mock_llm_chat, doctor_e2e_project):
     assert "✅ Doctor workflow complete: Puzzle solved!" in result.stdout
 
     # --- Final state verification ---
-    final_result = run_tests(test_nodes=[], source_root=project_dir)
+    final_result = test_runner.run()
     assert final_result is not None
-    assert final_result.passed == 1, "Tests should pass after the fix"
-    assert final_result.failed == 0
+    passed_count, failed_count, _ = final_result.get_counts()
+    assert passed_count == 1, "Tests should pass after the fix"
+    assert failed_count == 0

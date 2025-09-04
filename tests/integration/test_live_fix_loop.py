@@ -10,7 +10,7 @@ from pforge.config import Config
 from pforge.orchestrator.core import Orchestrator
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
-from pforge.validation.test_runner import run_tests
+from pforge.validation.test_runner import PytestRunner
 
 
 @pytest.fixture
@@ -56,11 +56,14 @@ async def test_live_e2e_full_loop(e2e_project):
     project = Project(project_dir)
     config = Config.load(path=project_dir / "pforge.toml")
 
+    import xml.etree.ElementTree as ET
+
     # --- Initial state verification ---
-    # Use the robust run_tests function we've already fixed
-    initial_result = run_tests(test_nodes=[], source_root=project_dir)
+    test_runner = PytestRunner(project_root=project_dir)
+    initial_result = test_runner.run()
     assert initial_result is not None
-    assert initial_result.failed == 1, "Test should initially fail"
+    _, failed_count, _ = initial_result.get_counts()
+    assert failed_count == 1, "Test should initially fail"
 
     # --- Setup Orchestrator and listener ---
     orchestrator = Orchestrator(config, project)
@@ -77,28 +80,28 @@ async def test_live_e2e_full_loop(e2e_project):
     # Manually kick off the process by sending the first TESTS_FAILED message
     # This is faster and more reliable for a test than waiting for the Observer's tick
     # Parse the report to create a realistic payload, mirroring the ObserverAgent's logic
-    report_data = orjson.loads(initial_result.report_content)
-    failed_tests_processed = []
-    for test in report_data.get("tests", []):
-        if test.get("outcome") == "failed":
-            failed_tests_processed.append({
-                "nodeid": test.get("nodeid"),
-                "traceback": test.get("longrepr", "")
-            })
+    failed_tests = []
+    if initial_result.junit_xml_path:
+        tree = ET.parse(initial_result.junit_xml_path)
+        root = tree.getroot()
+        for testcase in root.iter('testcase'):
+            failure = testcase.find('failure')
+            if failure is not None:
+                failed_tests.append({
+                    "nodeid": f"{testcase.attrib.get('classname')}.{testcase.attrib.get('name')}",
+                    "traceback": failure.text
+                })
+
     initial_failed_message = Message(
         type=MsgType.TESTS_FAILED,
-        payload={
-            "failed_tests": failed_tests_processed,
-            "failed": initial_result.failed,
-            "passed": initial_result.passed,
-        }
+        payload={"failed_tests": failed_tests}
     )
     await bus.publish(MsgType.TESTS_FAILED.value, initial_failed_message)
 
     # --- Wait for the outcome ---
     try:
         # Wait for the FIX_PATCH_APPLIED message that signals a successful fix
-        final_message = await bus.get(test_subscriber, timeout=20.0)
+        final_message = await bus.get(test_subscriber, timeout=60.0) # Increased timeout for live test
         assert final_message is not None
         assert final_message.type == MsgType.FIX_PATCH_APPLIED
     except TimeoutError:
@@ -112,7 +115,8 @@ async def test_live_e2e_full_loop(e2e_project):
 
     # --- Final state verification ---
     # Verify that the tests now pass
-    final_result = run_tests(test_nodes=[], source_root=project_dir)
+    final_result = test_runner.run()
     assert final_result is not None
-    assert final_result.passed == 1, "Tests should pass after the fix"
-    assert final_result.failed == 0
+    passed_count, failed_count, _ = final_result.get_counts()
+    assert passed_count == 1, "Tests should pass after the fix"
+    assert failed_count == 0

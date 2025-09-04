@@ -11,7 +11,8 @@ from pforge.config import Config
 from pforge.orchestrator.core import Orchestrator
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
-from pforge.validation.test_runner import run_tests
+from pforge.validation.test_runner import PytestRunner
+from pforge.validation.coverage_index import CoverageIndex
 
 
 @pytest.fixture
@@ -61,11 +62,17 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     correct_code = "def my_buggy_function():\n    return 2\n"
     mock_llm_chat.return_value = correct_code
 
+    import xml.etree.ElementTree as ET
+
     # --- Initial state verification ---
-    # Use the robust run_tests function we've already fixed
-    initial_result = run_tests(test_nodes=[], source_root=project_dir)
+    test_runner = PytestRunner(project_root=project_dir)
+    initial_result = test_runner.run()
+    # Generate a coverage report for the test selector to use
+    cov_index = CoverageIndex(project_root=project_dir)
+    cov_index.generate(test_path=str(project_dir / "tests"))
     assert initial_result is not None
-    assert initial_result.failed == 1, "Test should initially fail"
+    _, failed_count, _ = initial_result.get_counts()
+    assert failed_count == 1, "Test should initially fail"
 
     # --- Setup Orchestrator and listener ---
     orchestrator = Orchestrator(config, project)
@@ -82,21 +89,21 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     # Manually kick off the process by sending the first TESTS_FAILED message
     # This is faster and more reliable for a test than waiting for the Observer's tick
     # Parse the report to create a realistic payload, mirroring the ObserverAgent's logic
-    report_data = orjson.loads(initial_result.report_content)
-    failed_tests_processed = []
-    for test in report_data.get("tests", []):
-        if test.get("outcome") == "failed":
-            failed_tests_processed.append({
-                "nodeid": test.get("nodeid"),
-                "traceback": test.get("longrepr", "")
-            })
+    failed_tests = []
+    if initial_result.junit_xml_path:
+        tree = ET.parse(initial_result.junit_xml_path)
+        root = tree.getroot()
+        for testcase in root.iter('testcase'):
+            failure = testcase.find('failure')
+            if failure is not None:
+                failed_tests.append({
+                    "nodeid": f"{testcase.attrib.get('classname')}.{testcase.attrib.get('name')}",
+                    "traceback": failure.text
+                })
+
     initial_failed_message = Message(
         type=MsgType.TESTS_FAILED,
-        payload={
-            "failed_tests": failed_tests_processed,
-            "failed": initial_result.failed,
-            "passed": initial_result.passed,
-        }
+        payload={"failed_tests": failed_tests}
     )
     await bus.publish(MsgType.TESTS_FAILED.value, initial_failed_message)
 
@@ -117,7 +124,8 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
 
     # --- Final state verification ---
     # Verify that the tests now pass
-    final_result = run_tests(test_nodes=[], source_root=project_dir)
+    final_result = test_runner.run()
     assert final_result is not None
-    assert final_result.passed == 1, "Tests should pass after the fix"
-    assert final_result.failed == 0
+    passed_count, failed_count, _ = final_result.get_counts()
+    assert passed_count == 1, "Tests should pass after the fix"
+    assert failed_count == 0

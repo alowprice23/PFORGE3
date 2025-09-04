@@ -1,95 +1,139 @@
 from __future__ import annotations
-import subprocess
 import logging
-import orjson
-from pathlib import Path
-from typing import List, NamedTuple, Optional
+import subprocess
 import hashlib
-import uuid
+from pathlib import Path
+from dataclasses import dataclass, asdict
+from typing import List, Set, Optional
 
 logger = logging.getLogger(__name__)
 
-class TestRunnerResult(NamedTuple):
-    """
-    Holds the structured result of a test run.
-    """
+@dataclass
+class PytestRunResult:
+    """Holds the results of a single test run."""
     exit_code: int
-    passed: int
-    failed: int
-    skipped: int
-    duration_s: float
-    report_hash: str
-    report_content: str
-    command: List[str]
+    junit_xml_path: Optional[Path]
+    report_hash: Optional[str]
+    stdout: str
+    stderr: str
 
     def to_dict(self) -> dict:
-        return self._asdict()
+        """Converts the dataclass to a dictionary for serialization."""
+        # asdict is recursive, but we need to handle Path objects manually.
+        d = asdict(self)
+        if d.get("junit_xml_path"):
+            d["junit_xml_path"] = str(d["junit_xml_path"])
+        return d
 
-def run_tests(
-    test_nodes: List[str],
-    source_root: Path,
-    report_dir: Path = Path("pforge/var/test_reports")
-) -> Optional[TestRunnerResult]:
+    def get_counts(self) -> tuple[int, int, int]:
+        """Parses the JUnit XML to get passed, failed, and skipped counts."""
+        if not self.junit_xml_path or not self.junit_xml_path.exists():
+            return 0, 0, 0
+
+        import xml.etree.ElementTree as ET
+        try:
+            tree = ET.parse(self.junit_xml_path)
+            root = tree.getroot()
+            testsuite = root.find('testsuite')
+
+            failures = int(testsuite.attrib.get('failures', 0))
+            skipped = int(testsuite.attrib.get('skipped', 0))
+            total = int(testsuite.attrib.get('tests', 0))
+
+            passed = total - failures - skipped
+            return passed, failures, skipped
+        except (ET.ParseError, KeyError):
+            return 0, 0, 0
+
+    @property
+    def passed(self) -> bool:
+        """True if the test run was successful."""
+        # Exit code 0 means tests passed.
+        # Exit code 5 means no tests were collected, which is not a failure.
+        return self.exit_code in [0, 5]
+
+class PytestRunner:
     """
-    Runs a set of specified tests using pytest.
-
-    This function is a secure wrapper that executes pytest, generates a
-    structured JSON report, and returns the parsed results.
-
-    Args:
-        test_nodes: A list of specific test nodes to run (e.g., "tests/test_x.py").
-                    If empty, all tests are run.
-        source_root: The root directory to run the tests from.
-        report_dir: The directory to store the JSON test report.
-
-    Returns:
-        A TestRunResult object, or None if the test run fails catastrophically.
+    A robust wrapper around the test runner (pytest) for executing tests,
+    capturing results, and providing verifiable proofs.
     """
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = (report_dir / f"report-{uuid.uuid4()}.json").resolve()
 
-    command = [
-        "python",
-        "-m",
-        "pytest",
-        "--json-report",
-        f"--json-report-file={report_path}",
-    ] + test_nodes
+    def __init__(self, project_root: str | Path):
+        self.project_root = Path(project_root).resolve()
+        self.tests_run_since_last_patch: Set[str] = set()
 
-    logger.info(f"Running tests with command: {' '.join(command)}")
+    def run(self, targets: Optional[List[str]] = None, junit_xml_path: str = "test-results.xml") -> PytestRunResult:
+        """
+        Runs the test suite or a targeted subset of tests.
 
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            cwd=source_root,
-            timeout=300 # 5 minute timeout
-        )
-    except subprocess.TimeoutExpired as e:
-        logger.error(f"Test run timed out: {e}")
-        return None
+        Args:
+            targets: An optional list of specific test files or directories to run.
+                     If None, the entire test suite is run.
+            junit_xml_path: The path to save the JUnit XML report to.
 
-    if not report_path.exists():
-        logger.error(f"Pytest did not generate a report file at {report_path}.")
-        logger.error(f"--- Pytest Stdout ---\n{result.stdout}\n--- End Pytest Stdout ---")
-        logger.error(f"--- Pytest Stderr ---\n{result.stderr}\n--- End Pytest Stderr ---")
-        return None
+        Returns:
+            A TestRunResult object with the outcome.
+        """
+        junit_full_path = self.project_root / junit_xml_path
 
-    # Parse the JSON report
-    report_content = report_path.read_bytes()
-    report_hash = hashlib.sha256(report_content).hexdigest()
-    report_data = orjson.loads(report_content)
+        import sys
+        command = [sys.executable, "-m", "pytest"]
+        if targets:
+            command.extend(targets)
+        else:
+            # If no targets, run the default test discovery
+            pass
 
-    summary = report_data.get("summary", {})
+        command.append(f"--junit-xml={junit_full_path}")
 
-    return TestRunnerResult(
-        exit_code=result.returncode,
-        passed=summary.get("passed", 0),
-        failed=summary.get("failed", 0),
-        skipped=summary.get("skipped", 0),
-        duration_s=report_data.get("duration", 0.0),
-        report_hash=f"sha256:{report_hash}",
-        report_content=report_content.decode('utf-8'),
-        command=command
-    )
+        logger.info(f"Running test command: {' '.join(command)}")
+
+        try:
+            env = {"PYTHONPATH": str(self.project_root)}
+            process = subprocess.run(
+                command,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=600, # 10-minute timeout
+                env=env
+            )
+
+            report_hash = None
+            if junit_full_path.exists():
+                report_content = junit_full_path.read_bytes()
+                report_hash = hashlib.sha256(report_content).hexdigest()
+
+                # Update the set of tests run
+                if targets:
+                    self.tests_run_since_last_patch.update(targets)
+                else:
+                    # If we ran the full suite, we can mark all known tests as run.
+                    # This requires a discovery mechanism, which is out of scope for now.
+                    # For now, we'll just use a placeholder.
+                    self.tests_run_since_last_patch.add("full_suite")
+
+
+            return PytestRunResult(
+                exit_code=process.returncode,
+                junit_xml_path=junit_full_path if junit_full_path.exists() else None,
+                report_hash=report_hash,
+                stdout=process.stdout,
+                stderr=process.stderr
+            )
+
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"Test run timed out: {e}")
+            return TestRunResult(
+                exit_code=-1,
+                junit_xml_path=None,
+                report_hash=None,
+                stdout="",
+                stderr=f"Timeout: {e}"
+            )
+
+    def clear_run_history(self):
+        """Clears the history of tests run since the last patch."""
+        self.tests_run_since_last_patch.clear()
+        logger.info("Cleared test run history.")

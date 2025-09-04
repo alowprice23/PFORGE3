@@ -34,6 +34,7 @@ class BaseAgent(ABC):
         self.logger = logging.getLogger(f"pforge.agent.{self.name}")
         self._is_running = False
         self._capability_tokens: Dict[str, str] = {} # Map op_id to token
+        self._verified_payloads: Dict[str, Dict] = {} # Cache for verified payloads
 
     def receive_token(self, token: str, op_id: str):
         """
@@ -52,29 +53,35 @@ class BaseAgent(ABC):
         Checks if the agent holds a valid capability token for the given
         permission and operation ID.
         """
-        token = self._capability_tokens.get(op_id)
-        if not token:
-            self.logger.warning(f"No capability token found for op_id: {op_id}")
+        payload = self._verified_payloads.get(op_id)
+
+        if not payload:
+            token = self._capability_tokens.get(op_id)
+            if not token:
+                self.logger.warning(f"No capability token found for op_id: {op_id}")
+                return False
+
+            try:
+                payload = await verify_token(token, self.bus.redis_client)
+                self._verified_payloads[op_id] = payload # Cache the payload
+            except InvalidCapabilityError as e:
+                self.logger.error(f"Token for op_id '{op_id}' is invalid: {e}")
+                # Once a token is invalid, remove it.
+                if op_id in self._capability_tokens:
+                    del self._capability_tokens[op_id]
+                return False
+
+        # Now, check the payload from the cache or from fresh verification
+        if payload.get("actor") != self.name:
+            self.logger.error(f"Token actor mismatch: token is for '{payload.get('actor')}', but I am '{self.name}'")
             return False
 
-        try:
-            payload = await verify_token(token, self.bus.redis_client)
-            # Ensure the token's actor matches this agent
-            if payload.get("actor") != self.name:
-                self.logger.error(f"Token actor mismatch: token is for '{payload.get('actor')}', but I am '{self.name}'")
-                return False
-
-            # Check if the required permission is in the token's scope
-            if permission in payload.get("scope", []):
-                self.logger.info(f"Capability '{permission}' for op_id '{op_id}' is valid.")
-                return True
-            else:
-                self.logger.warning(f"Capability '{permission}' not in scope for op_id '{op_id}'.")
-                return False
-        except InvalidCapabilityError as e:
-            self.logger.error(f"Token for op_id '{op_id}' is invalid: {e}")
-            # Once a token is invalid, remove it.
-            del self._capability_tokens[op_id]
+        # Check if the required permission is in the token's scope
+        if permission in payload.get("scope", []):
+            self.logger.info(f"Capability '{permission}' for op_id '{op_id}' is valid.")
+            return True
+        else:
+            self.logger.warning(f"Capability '{permission}' not in scope for op_id '{op_id}'.")
             return False
 
     async def run_loop(self):

@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from pforge.agents import FormatterAgent
-from pforge.config import Config, DoctorConfig, LLMConfig, SpecificationsConfig
+from pforge.config import Config, DoctorConfig, LLMConfig, SpecificationsConfig, RecoveryConfig
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
@@ -24,7 +24,8 @@ async def test_formatter_agent(temp_file):
     config = Config(
         llm=LLMConfig(model="gpt-4-turbo"),
         doctor=DoctorConfig(retry_limit=3),
-        specifications=SpecificationsConfig(raw_config={})
+        specifications=SpecificationsConfig(raw_config={}),
+        recovery=RecoveryConfig(enabled=False, checks=[])
     )
     project = Project(root_path=temp_file.parent)
     agent = FormatterAgent(bus, config, project)

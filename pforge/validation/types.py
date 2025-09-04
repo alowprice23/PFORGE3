@@ -1,72 +1,87 @@
 from __future__ import annotations
-import subprocess
 import logging
+import subprocess
 from pathlib import Path
-from typing import Set, List, NamedTuple
+from dataclasses import dataclass
+from typing import List, Set
 
-from .dep_graph import DependencyGraph
+from pforge.validation.dep_graph import DependencyGraph
 
 logger = logging.getLogger(__name__)
 
-class TypeCheckResult(NamedTuple):
-    """
-    Holds the result of a type checking operation.
-    """
+@dataclass
+class TypeCheckResult:
+    """Holds the results of a mypy run."""
     exit_code: int
-    report: str
-    files_checked: List[str]
+    stdout: str
+    stderr: str
 
-def run_delta_typecheck(
-    changed_files: Set[str],
-    dep_graph: DependencyGraph,
-    source_root: Path
+    @property
+    def passed(self) -> bool:
+        """True if the type check passed."""
+        return self.exit_code == 0
+
+def run_delta_type_check(
+    changed_files: List[str | Path],
+    dep_graph: DependencyGraph
 ) -> TypeCheckResult:
     """
-    Runs the typechecker on a minimal subset of files affected by a change.
-
-    This avoids the overhead of type-checking the entire codebase for small,
-    localized changes.
+    Runs the type checker (mypy) on a minimal set of files affected by changes.
 
     Args:
-        changed_files: A set of source file paths that have changed.
+        changed_files: A list of file paths that have been modified.
         dep_graph: The project's dependency graph.
-        source_root: The root path of the source code to check.
 
     Returns:
         A TypeCheckResult object with the outcome.
     """
-    # 1. Determine the full set of files to check
-    # This includes the changed files plus any files that depend on them.
-    # We assume file paths are relative to the source_root for the graph.
-    changed_modules = {str(Path(p).relative_to(source_root)) for p in changed_files}
-    impacted_modules = dep_graph.get_reverse_closure(changed_modules)
+    if not changed_files:
+        logger.info("No changed files, skipping type check.")
+        return TypeCheckResult(exit_code=0, stdout="No files to check.", stderr="")
 
-    files_to_check = [str(source_root / m.replace('.', '/')) + '.py' for m in impacted_modules]
+    # 1. Compute the reverse dependency closure to find all affected files.
+    affected_files: Set[Path] = set()
+    for file_path in changed_files:
+        p = Path(file_path)
+        if not p.is_absolute():
+            p = dep_graph.project_root / p
+        affected_files.add(p)
 
-    if not files_to_check:
-        logger.info("No files to type check.")
-        return TypeCheckResult(exit_code=0, report="", files_checked=[])
+        reverse_deps = dep_graph.get_reverse_dependencies(file_path)
+        affected_files.update(reverse_deps)
 
-    # 2. Invoke the typechecker (mypy)
-    # We use mypy here, but this could be configured to use pyright, etc.
-    command = [
-        "mypy",
-        "--ignore-missing-imports",
-        "--follow-imports=silent",
-        "--show-error-codes",
-    ] + files_to_check
+    logger.info(f"Running type check on {len(affected_files)} affected files.")
 
-    logger.info(f"Running delta type check on {len(files_to_check)} files...")
+    # 2. Invoke the type checker on this subset of files.
+    command = ["mypy"] + [str(p) for p in affected_files]
 
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        cwd=source_root
-    )
+    try:
+        process = subprocess.run(
+            command,
+            cwd=dep_graph.project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300 # 5-minute timeout
+        )
 
-    return TypeCheckResult(
-        exit_code=result.returncode,
-        report=result.stdout,
-        files_checked=files_to_check,
-    )
+        return TypeCheckResult(
+            exit_code=process.returncode,
+            stdout=process.stdout,
+            stderr=process.stderr
+        )
+
+    except subprocess.TimeoutExpired as e:
+        logger.error(f"Type check timed out: {e}")
+        return TypeCheckResult(
+            exit_code=-1,
+            stdout="",
+            stderr=f"Timeout: {e}"
+        )
+    except FileNotFoundError:
+        logger.error("`mypy` command not found. Is it installed and in the system's PATH?")
+        return TypeCheckResult(
+            exit_code=-1,
+            stdout="",
+            stderr="`mypy` not found."
+        )

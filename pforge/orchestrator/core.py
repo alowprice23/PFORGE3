@@ -137,6 +137,7 @@ class Orchestrator:
 
     async def _handle_fix_patch_rejected(self, payload: Dict):
         """Handles a rejected patch, implementing the retry logic."""
+        logger.info(f"Handling rejected patch with payload: {payload}")
         file_path = payload.get("file_path")
         if not file_path:
             logger.warning("FIX_PATCH_REJECTED message received without a file_path.")

@@ -44,6 +44,7 @@ class PlannerAgent(BaseAgent):
         # Subscribe to events that can create or resolve tasks
         self.bus.subscribe(self.name, MsgType.METRICS_UPDATED.value)
         self.bus.subscribe(self.name, MsgType.TASK_ANALYZED.value) # To get failure details and risk assessment
+        self.bus.subscribe(self.name, MsgType.FIX_FAILED.value) # To trigger retries
         self.bus.subscribe(self.name, MsgType.PROPOSE_REMOVAL.value)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value) # To clear completed tasks
 
@@ -81,18 +82,21 @@ class PlannerAgent(BaseAgent):
             if not message:
                 break
 
+            logger.info(f"PlannerAgent received message: {message.type}")
+
             if message.type == MsgType.TASK_ANALYZED:
                 self._add_fix_tasks_from_analysis(message.payload)
+            elif message.type == MsgType.FIX_FAILED:
+                # Remove the task from dispatched so it can be retried
+                nodeid = message.payload.get("failed_test_nodeid")
+                if nodeid in self.dispatched_tasks:
+                    self.dispatched_tasks.discard(nodeid)
+                self._add_fix_tasks_from_failure(message.payload)
             elif message.type == MsgType.PROPOSE_REMOVAL:
                 self._add_removal_task(message.payload)
             elif message.type == MsgType.FIX_PATCH_APPLIED:
-                # If a fix was applied, we can assume the task is done.
-                # A more robust system would match on op_id.
-                task_id = message.payload.get("failed_test_nodeid") # Assuming this is the ID
-                if task_id in self.task_board:
-                    del self.task_board[task_id]
-                    self.dispatched_tasks.discard(task_id)
-                    logger.info(f"Removed completed task from board: {task_id}")
+                # The orchestrator will handle task completion
+                pass
 
     def _add_fix_tasks_from_analysis(self, payload: dict):
         """Create fix tasks from a TASK_ANALYZED event."""
@@ -126,6 +130,44 @@ class PlannerAgent(BaseAgent):
             )
             self.task_board[task.id] = task
             logger.info(f"Added new fix task to board: {task.id} with priority {priority:.2f}")
+
+    def _add_fix_tasks_from_failure(self, payload: dict):
+        """Create a fix task from a FIX_FAILED event."""
+        op_id = payload.get("op_id")
+        if not op_id:
+            logger.warning("FIX_FAILED message received without an op_id.")
+            return
+
+        # Find the original task by op_id
+        original_task = None
+        for task in self.task_board.values():
+            if task.payload.get("op_id") == op_id:
+                original_task = task
+                break
+
+        if not original_task:
+            logger.warning(f"Could not find original task for op_id: {op_id}")
+            return
+
+        nodeid = original_task.id
+
+        # For a retry, we can assume the effort is high and the impact is high.
+        impact = 1.0
+        frequency = 1.0
+        effort_dist = np.array([10.0]) # High effort for a retry
+
+        priority = calculate_priority(impact, frequency, effort_dist)
+
+        task = Task(
+            id=nodeid,
+            type="fix_bug",
+            description=payload.get("description", ""),
+            priority=priority,
+            effort=10.0,
+            payload=payload,
+        )
+        self.task_board[task.id] = task
+        logger.info(f"Added new retry fix task to board: {task.id} with priority {priority:.2f}")
 
     def _add_removal_task(self, payload: dict):
         """Create a removal task from a PROPOSE_REMOVAL event."""
@@ -179,6 +221,7 @@ class PlannerAgent(BaseAgent):
         op_id = str(uuid.uuid4())
 
         if task.type == "fix_bug":
+            task.payload["op_id"] = op_id
             # This logic is adapted from the old PlannerAgent
             nodeid = task.payload.get("nodeid")
             test_file_path = nodeid.split("::")[0]
