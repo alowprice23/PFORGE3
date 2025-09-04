@@ -15,6 +15,8 @@ from pforge.validation.coverage_index import CoverageIndex
 from pforge.validation.test_runner import PytestRunner
 from pforge.validation.selection import TestSelector
 from pforge.validation.types import run_delta_type_check
+from pforge.tools.imports import rewrite_imports
+import libcst as cst
 
 
 if TYPE_CHECKING:
@@ -31,6 +33,7 @@ class FixerAgent(BaseAgent):
     def __init__(self, bus: InMemoryBus, config: Config, project: Project):
         super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.FIX_TASK.value)
+        self.bus.subscribe(self.name, MsgType.REFACTOR_TASK.value)
 
         # In a real system, the client would be injected or created by a factory
         # based on config. For now, we'll instantiate one directly.
@@ -64,6 +67,82 @@ class FixerAgent(BaseAgent):
         if message.type == MsgType.FIX_TASK:
             logger.info("FixerAgent received a FixTask command.")
             await self._handle_fix_task(message.payload)
+        elif message.type == MsgType.REFACTOR_TASK:
+            logger.info("FixerAgent received a RefactorTask command.")
+            await self._handle_refactor_task(message.payload)
+
+    async def _handle_refactor_task(self, payload: dict):
+        """Handles a refactoring task to move a symbol and update imports."""
+        original_path = payload.get('file_path')
+        symbol = payload.get('symbol')
+        new_path = payload.get('suggestion')
+        op_id = payload.get('op_id')
+        token = payload.get('capability_token')
+
+        if not all([original_path, symbol, new_path, op_id, token]):
+            logger.error(f"Invalid REFACTOR_TASK message received: {payload}")
+            return
+
+        self.receive_token(token, op_id)
+        logger.info(f"Attempting to refactor '{symbol}' from '{original_path}' to '{new_path}'")
+
+        try:
+            # 1. Read the original file and find the symbol's code
+            original_content = self.project.read_file(original_path)
+            tree = cst.parse_module(original_content)
+
+            symbol_node = None
+            for node in tree.body:
+                if isinstance(node, (cst.FunctionDef, cst.ClassDef)) and node.name.value == symbol:
+                    symbol_node = node
+                    break
+
+            if not symbol_node:
+                logger.error(f"Could not find symbol '{symbol}' in '{original_path}'")
+                return
+
+            symbol_code = cst.Module([symbol_node]).code
+
+            # 2. Remove the symbol from the original file
+            class SymbolRemover(cst.CSTTransformer):
+                def __init__(self, symbol_name):
+                    self.symbol_name = symbol_name
+
+                def leave_FunctionDef(self, original_node, updated_node):
+                    if original_node.name.value == self.symbol_name:
+                        return cst.RemoveFromParent()
+                    return updated_node
+
+                def leave_ClassDef(self, original_node, updated_node):
+                    if original_node.name.value == self.symbol_name:
+                        return cst.RemoveFromParent()
+                    return updated_node
+
+            remover = SymbolRemover(symbol)
+            modified_tree = tree.visit(remover)
+            self.project.write_file(original_path, modified_tree.code)
+
+            # 3. Add the symbol to the new file
+            try:
+                new_content = self.project.read_file(new_path)
+            except FileNotFoundError:
+                new_content = "" # Create a new file if it doesn't exist
+
+            new_tree = cst.parse_module(new_content)
+            new_body = list(new_tree.body) + [symbol_node]
+            final_tree = new_tree.with_changes(body=new_body)
+            self.project.write_file(new_path, final_tree.code)
+
+            # 4. Rewrite all imports
+            logger.info(f"Rewriting imports for {symbol} moved from {original_path} to {new_path}")
+            rewrite_imports(self.project, symbol, original_path, new_path)
+
+            logger.info(f"Successfully refactored '{symbol}' to '{new_path}'")
+            # TODO: Publish a success message?
+
+        except Exception as e:
+            logger.error(f"Refactoring failed for symbol '{symbol}': {e}", exc_info=True)
+            # TODO: Implement rollback logic
 
     def _build_prompt(self, file_path: str, description: str, original_content: str, failed_fix_info: dict | None = None) -> str:
         prompt = (

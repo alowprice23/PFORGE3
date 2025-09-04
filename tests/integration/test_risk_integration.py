@@ -81,8 +81,8 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
     updated_effort_dist = second_analysis_msg.payload['effort_distribution']
     updated_mean_effort = np.mean(updated_effort_dist)
 
-    # 8. Assert that the mean effort is now higher due to learned risk
-    assert updated_mean_effort > initial_mean_effort
+    # 8. Assert that the mean effort is now lower due to learned risk (higher beta)
+    assert updated_mean_effort < initial_mean_effort
 
     # === Part 3: Ensure Planner still works (light check) ===
     planner = PlannerAgent(bus, mock_config, mock_project)

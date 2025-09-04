@@ -100,7 +100,7 @@ class MisfitAgent(BaseAgent):
 
     async def _check_symbol_placement(self, file_path: str, symbol_name: str, node: cst.CSTNode):
         # Create a summary of the project structure to give the LLM context
-        project_structure = "\n".join(self.project.get_all_files())
+        project_structure = "\n".join(self.project.list_files())
         symbol_code = cst.Module([node]).code
 
         system_prompt = (
