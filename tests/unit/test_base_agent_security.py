@@ -52,20 +52,35 @@ async def test_receive_and_verify_capability(test_agent):
     assert await test_agent.has_capability("fs:delete", op_id) is False
 
 @pytest.mark.asyncio
-async def test_replay_attack_is_blocked(test_agent):
+async def test_capability_is_cached_after_first_verification(test_agent):
+    """
+    Tests that after a token is verified once, its payload is cached
+    and subsequent capability checks for the same op_id do not trigger
+    another verification (which would fail a replay check).
+    """
     op_id = "test_op_456"
-    token = issue_token(actor="test_agent", scope=["exec:test"], op_id=op_id, expires_in_seconds=10)
-
-    # Agent receives the token. This doesn't verify.
+    token = issue_token(actor="test_agent", scope=["exec:test", "fs:read"], op_id=op_id, expires_in_seconds=10)
     test_agent.receive_token(token, op_id)
 
-    # First check should succeed. sadd returns 1.
-    test_agent.bus.redis_client.sadd.return_value = 1
-    assert await test_agent.has_capability("exec:test", op_id) is True
+    # --- Mock the verification call (via redis) ---
+    # We will track the calls to this mock.
+    verify_mock = test_agent.bus.redis_client.sadd
+    verify_mock.return_value = 1 # Simulate a successful, first-time verification
 
-    # Second check should fail. sadd returns 0.
-    test_agent.bus.redis_client.sadd.return_value = 0
-    assert await test_agent.has_capability("exec:test", op_id) is False
+    # --- First check ---
+    # This should trigger the actual verification.
+    assert await test_agent.has_capability("exec:test", op_id) is True
+    verify_mock.assert_called_once()
+
+    # --- Second check for a different permission on the same token ---
+    # This should use the cached payload and NOT trigger another verification.
+    assert await test_agent.has_capability("fs:read", op_id) is True
+    verify_mock.assert_called_once() # Assert that the mock was NOT called again
+
+    # --- Third check for a permission that is not in the scope ---
+    # This should also use the cache and fail without triggering verification.
+    assert await test_agent.has_capability("fs:write", op_id) is False
+    verify_mock.assert_called_once() # Assert that the mock was STILL not called again
 
 @pytest.mark.asyncio
 async def test_publish_redacts_payload(test_agent, mock_bus):

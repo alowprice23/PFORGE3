@@ -149,10 +149,11 @@ class Orchestrator:
         if current_retry_count < retry_limit:
             self.retry_counts[file_path] = current_retry_count + 1
             logger.info(
-                f"Retry {current_retry_count + 1}/{retry_limit} for bug in {file_path}."
+                f"Orchestrator logged retry {current_retry_count + 1}/{retry_limit} for bug in {file_path}. "
+                "PlannerAgent is responsible for requeueing."
             )
-            fix_failed_message = Message(type=MsgType.FIX_FAILED, payload=payload)
-            await self.bus.publish(MsgType.FIX_FAILED.value, fix_failed_message)
+            # The PlannerAgent is subscribed to FIX_PATCH_REJECTED and will handle the retry.
+            # The orchestrator's only job is to count and decide when to give up.
         else:
             logger.error(
                 f"Could not fix bug in {file_path} after {retry_limit} attempts. Giving up."

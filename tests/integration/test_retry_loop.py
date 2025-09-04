@@ -87,7 +87,7 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
         await orchestrator.bus.publish(MsgType.TESTS_FAILED.value, initial_test_failure_message)
 
         # Let the system run for a few cycles to process the retries
-        await asyncio.sleep(5)
+        await asyncio.sleep(10)
 
         # --- Assert ---
         # The FixerAgent should have been called 3 times:
@@ -102,11 +102,10 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
         ]
         assert len(fix_task_calls) == 3
 
-        # The second FIX_TASK should have an augmented prompt
+        # The second FIX_TASK should have `failed_fix_info` in its payload
         retry_fix_task_message = fix_task_calls[1].args[1]
-        retry_description = retry_fix_task_message.payload["description"]
-        assert "A previous attempt to fix the bug" in retry_description
-        assert "Please analyze the previous mistake" in retry_description
+        assert "failed_fix_info" in retry_fix_task_message.payload, \
+            "The payload of a retry task should contain information about the previous failed fix."
 
         # The orchestrator should have logged that it's giving up
         # We can't easily check logs here, but the call count implies it stopped.

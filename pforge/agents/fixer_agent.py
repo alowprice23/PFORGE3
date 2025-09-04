@@ -93,6 +93,7 @@ class FixerAgent(BaseAgent):
         failed_test_nodeid = payload.get('failed_test_nodeid')
         op_id = payload.get('op_id')
         token = payload.get('capability_token')
+        failed_fix_info = payload.get('failed_fix_info') # Get info about prior failed fixes
 
         if not all([file_path, description, op_id, token]):
             logger.error(f"Invalid FIX_TASK message received: {payload}")
@@ -109,7 +110,7 @@ class FixerAgent(BaseAgent):
             logger.error(f"[FixerLog] File not found: {file_path}. Cannot apply fix.")
             return
 
-        prompt = self._build_prompt(file_path, description, original_content)
+        prompt = self._build_prompt(file_path, description, original_content, failed_fix_info)
 
         logger.info("[FixerLog] Calling LLM...")
         llm_response = ""
@@ -225,4 +226,4 @@ class FixerAgent(BaseAgent):
         result_message.payload["proof"] = proof.model_dump()
 
         logger.info(f"[FixerLog] Publishing {result_msg_type.value} for {file_path}")
-        await self.publish("orchestrator", result_message)
+        await self.publish(result_msg_type.value, result_message)

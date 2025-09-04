@@ -23,7 +23,7 @@ async def run_doctor_flow(project_path: Path, test_node_id: str | None = None):
         typer.echo(f"🩺 Starting pForge Doctor on: {project_path}")
 
     try:
-        config = Config.load()
+        config = Config.load(project_path / "pforge.toml")
     except FileNotFoundError:
         typer.echo("🚨 Error: pforge.toml not found in the current directory.")
         typer.echo("Please create one or run `pforge init`.")
@@ -35,7 +35,9 @@ async def run_doctor_flow(project_path: Path, test_node_id: str | None = None):
     orchestrator.setup_agents()
 
     # The orchestrator will now run until the puzzle is solved or it fails.
+    print("Running orchestrator...")
     success = await orchestrator.run()
+    print("Orchestrator finished.")
 
     if success:
         typer.echo("✅ Doctor workflow complete: Puzzle solved!")

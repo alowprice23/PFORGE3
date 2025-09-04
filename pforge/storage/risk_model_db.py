@@ -44,8 +44,10 @@ class RiskModelDB:
         cursor.execute("SELECT alpha, beta FROM risk_model WHERE file_path = ?", (file_path,))
         row = cursor.fetchone()
         if row:
+            logger.info(f"Retrieved risk params for {file_path}: {dict(row)}")
             return dict(row)
         else:
+            logger.info(f"No risk params found for {file_path}, returning defaults.")
             return {"alpha": self.DEFAULT_ALPHA, "beta": self.DEFAULT_BETA}
 
     def update_risk_params(self, file_path: str, success: bool):

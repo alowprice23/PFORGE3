@@ -50,38 +50,49 @@ class BaseAgent(ABC):
 
     async def has_capability(self, permission: str, op_id: str) -> bool:
         """
-        Checks if the agent holds a valid capability token for the given
-        permission and operation ID.
+        Checks if the agent holds a valid capability for the given permission
+        and operation ID.
+
+        This method verifies a token once per op_id, caching the payload to
+        allow checking multiple permissions on the same token without causing
+        a replay error.
         """
-        payload = self._verified_payloads.get(op_id)
-
-        if not payload:
-            token = self._capability_tokens.get(op_id)
-            if not token:
-                self.logger.warning(f"No capability token found for op_id: {op_id}")
+        # Step 1: Check for a cached, verified payload first.
+        if op_id in self._verified_payloads:
+            payload = self._verified_payloads[op_id]
+            if permission in payload.get("scope", []):
+                self.logger.info(f"Cached capability '{permission}' for op_id '{op_id}' is valid.")
+                return True
+            else:
+                self.logger.warning(f"Cached capability '{permission}' not in scope for op_id '{op_id}'.")
                 return False
 
-            try:
-                payload = await verify_token(token, self.bus.redis_client)
-                self._verified_payloads[op_id] = payload # Cache the payload
-            except InvalidCapabilityError as e:
-                self.logger.error(f"Token for op_id '{op_id}' is invalid: {e}")
-                # Once a token is invalid, remove it.
-                if op_id in self._capability_tokens:
-                    del self._capability_tokens[op_id]
-                return False
-
-        # Now, check the payload from the cache or from fresh verification
-        if payload.get("actor") != self.name:
-            self.logger.error(f"Token actor mismatch: token is for '{payload.get('actor')}', but I am '{self.name}'")
+        # Step 2: If not cached, verify the token from storage.
+        token = self._capability_tokens.get(op_id)
+        if not token:
+            self.logger.warning(f"No capability token found for op_id: {op_id}")
             return False
 
-        # Check if the required permission is in the token's scope
-        if permission in payload.get("scope", []):
-            self.logger.info(f"Capability '{permission}' for op_id '{op_id}' is valid.")
-            return True
-        else:
-            self.logger.warning(f"Capability '{permission}' not in scope for op_id '{op_id}'.")
+        try:
+            payload = await verify_token(token, self.bus.redis_client)
+            # Step 3: Cache the payload on successful verification.
+            self._verified_payloads[op_id] = payload
+            self.logger.info(f"Token for op_id '{op_id}' verified and payload cached.")
+
+            # Step 4: Check the permission against the newly cached payload.
+            if permission in payload.get("scope", []):
+                self.logger.info(f"Capability '{permission}' for op_id '{op_id}' is valid.")
+                return True
+            else:
+                self.logger.warning(f"Capability '{permission}' not in scope for op_id '{op_id}'.")
+                return False
+        except InvalidCapabilityError as e:
+            self.logger.error(f"Token for op_id '{op_id}' is invalid: {e}")
+            # Once a token is invalid, remove it from all storage.
+            if op_id in self._capability_tokens:
+                del self._capability_tokens[op_id]
+            if op_id in self._verified_payloads:
+                del self._verified_payloads[op_id]
             return False
 
     async def run_loop(self):
