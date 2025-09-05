@@ -3,6 +3,7 @@ pyproject.toml
 pforge/__init__.py
 pforge/config.py
 pforge/project.py
+pforge/snapshot.py
 pforge.egg-info/PKG-INFO
 pforge.egg-info/SOURCES.txt
 pforge.egg-info/dependency_links.txt
