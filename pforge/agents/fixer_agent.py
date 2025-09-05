@@ -41,8 +41,8 @@ class FixerAgent(BaseAgent):
         # based on config. For now, we'll instantiate one directly.
         # The budget meter would also be shared.
         budget_meter = BudgetMeter(
-            tenant="pforge-dev",
-            daily_quota_tokens=1_000_000,
+            tenant=self.config.budget.tenant,
+            daily_quota_tokens=self.config.budget.daily_quota_tokens,
             redis_client=self.bus.redis_client # Assuming bus exposes this
         )
         self.llm_client = OpenAIClient(
@@ -88,9 +88,12 @@ class FixerAgent(BaseAgent):
         self.receive_token(token, op_id)
         logger.info(f"Attempting to refactor '{symbol}' from '{original_path}' to '{new_path}'")
 
+        original_contents = {}
+        modified_files = []
         try:
             # 1. Read the original file and find the symbol's code
             original_content = self.project.read_file(original_path)
+            original_contents[original_path] = original_content
             tree = cst.parse_module(original_content)
 
             symbol_node = None
@@ -123,28 +126,40 @@ class FixerAgent(BaseAgent):
             remover = SymbolRemover(symbol)
             modified_tree = tree.visit(remover)
             self.project.write_file(original_path, modified_tree.code)
+            modified_files.append(original_path)
 
             # 3. Add the symbol to the new file
             try:
                 new_content = self.project.read_file(new_path)
+                original_contents[new_path] = new_content
             except FileNotFoundError:
                 new_content = "" # Create a new file if it doesn't exist
+                original_contents[new_path] = ""
+
 
             new_tree = cst.parse_module(new_content)
             new_body = list(new_tree.body) + [symbol_node]
             final_tree = new_tree.with_changes(body=new_body)
             self.project.write_file(new_path, final_tree.code)
+            modified_files.append(new_path)
 
             # 4. Rewrite all imports
             logger.info(f"Rewriting imports for {symbol} moved from {original_path} to {new_path}")
-            rewrite_imports(self.project, symbol, original_path, new_path)
+            rewritten_files = rewrite_imports(self.project, symbol, original_path, new_path)
+            for file in rewritten_files:
+                original_contents[file] = self.project.read_file(file)
+                modified_files.append(file)
+
 
             logger.info(f"Successfully refactored '{symbol}' to '{new_path}'")
             # TODO: Publish a success message?
 
         except Exception as e:
             logger.error(f"Refactoring failed for symbol '{symbol}': {e}", exc_info=True)
-            # TODO: Implement rollback logic
+            # Rollback all modified files
+            for file_path, content in original_contents.items():
+                self.project.write_file(file_path, content)
+            logger.info("Rolled back changes from failed refactoring.")
 
     def _build_prompt(self, file_path: str, description: str, original_content: str, failed_fix_info: dict | None = None) -> str:
         prompt = (
@@ -267,7 +282,8 @@ class FixerAgent(BaseAgent):
                     await self.publish(MsgType.GAP_DELTA.value, delta_message)
                     logger.info("[FixerLog] Published GapDelta signal.")
                 else:
-                    logger.warning(f"[FixerLog] Fix failed verification in sandbox.")
+                    logger.warning(f"[FixerLog] Fix failed verification in sandbox. Rolling back changes.")
+                    self.project.write_file(file_path, original_content)
                     traceback = ""
                     if not test_result.passed:
                         traceback += f"--- Test Failures ---\n{test_result.stdout}\n{test_result.stderr}\n\n"
@@ -281,6 +297,7 @@ class FixerAgent(BaseAgent):
 
         except Exception as e:
             logger.error(f"[FixerLog] An error occurred during fix handling: {e}", exc_info=True)
+            self.project.write_file(file_path, original_content)
             result_payload["traceback"] = str(e)
             fix_is_ok = False
             content_sha_after = content_sha_before

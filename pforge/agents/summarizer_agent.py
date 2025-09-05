@@ -17,8 +17,8 @@ class SummarizerAgent(BaseAgent):
         super().__init__(bus, *args, **kwargs)
         # In a real system, the budget meter would be shared.
         budget_meter = BudgetMeter(
-            tenant="pforge-dev",
-            daily_quota_tokens=1_000_000,
+            tenant=self.config.budget.tenant,
+            daily_quota_tokens=self.config.budget.daily_quota_tokens,
             redis_client=self.bus.redis_client
         )
         self.llm_client = OpenAIClient(

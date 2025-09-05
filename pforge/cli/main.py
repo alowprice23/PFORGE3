@@ -47,12 +47,10 @@ def main(
     root_logger.addHandler(handler)
 
     if ctx.invoked_subcommand is None:
-        typer.echo("Welcome to the pForge CLI. Run 'pforge --help' for a list of commands.")
-        typer.echo("Interactive chat mode is not yet implemented in this slice.")
         # In the full implementation, this would call a function from `chat.py`
         # to start the REPL loop.
-        # from .chat import start_chat_repl
-        # start_chat_repl()
+        from .chat import start_chat_repl
+        start_chat_repl()
 
 if __name__ == "__main__":
     app()

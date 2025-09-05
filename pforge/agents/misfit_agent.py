@@ -53,8 +53,8 @@ class MisfitAgent(BaseAgent):
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
 
         budget_meter = BudgetMeter(
-            tenant="pforge-dev",
-            daily_quota_tokens=1_000_000,
+            tenant=self.config.budget.tenant,
+            daily_quota_tokens=self.config.budget.daily_quota_tokens,
             redis_client=self.bus.redis_client
         )
         self.llm_client = OpenAIClient(

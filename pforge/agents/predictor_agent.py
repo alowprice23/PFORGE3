@@ -9,6 +9,7 @@ from pathlib import Path
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
 from pforge.storage.risk_model_db import RiskModelDB
+from pforge.validation.coverage_index import CoverageIndex
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -34,11 +35,18 @@ class PredictorAgent(BaseAgent):
         self.bus.subscribe(self.name, MsgType.BACKTRACK_COMPLETED.value)
 
         self.risk_db = RiskModelDB()
+        self.coverage_index = CoverageIndex(project_root=self.project.root)
+        self.coverage_index.load()
 
     async def on_tick(self):
         """
         Consumes events to update the risk model and to assess new tasks.
         """
+        # Reload coverage index if it's stale
+        if self.coverage_index.is_stale():
+            self.coverage_index.generate()
+            self.coverage_index.load()
+
         message = await self.bus.get(self.name, timeout=0.1)
         if not message:
             return
@@ -62,51 +70,51 @@ class PredictorAgent(BaseAgent):
                     self.risk_db.update_risk_params(file_path, success=success)
                     logger.info(f"Updated risk for {file_path} (success={success})")
 
+    def _infer_source_path_from_imports(self, test_file_path: str) -> str | None:
+        """
+        Infers a source file from a test file by analyzing its imports.
+        """
+        import ast
+        import os
+
+        full_path = self.project.root / test_file_path
+        try:
+            with open(full_path, "r") as f:
+                tree = ast.parse(f.read())
+        except FileNotFoundError:
+            logger.warning(f"Cannot infer source path: test file not found at {full_path}")
+            return None
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module:
+                    source_module = node.module.replace(".", "/")
+                    source_file = f"{source_module}.py"
+                    if (self.project.root / source_file).exists():
+                        logger.info(f"Inferred source path '{source_file}' from import in '{full_path}'")
+                        return source_file
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    source_module = alias.name.replace(".", "/")
+                    source_file = f"{source_module}.py"
+                    if (self.project.root / source_file).exists():
+                        logger.info(f"Inferred source path '{source_file}' from import in '{full_path}'")
+                        return source_file
+
+        return None
+
     def _infer_source_path_from_test_failure(self, failure: Dict) -> str | None:
         """
-        Infers a source file from a test file path using a filename-based search.
-        e.g., `tests/unit/test_foo.py` -> `pforge/foo.py`
+        Infers a source file from a test failure using coverage data.
         """
         nodeid = failure.get("nodeid")
         if not nodeid:
             logger.warning("Cannot infer source path: failure has no 'nodeid'.")
             return None
 
-        test_file_path_str = nodeid.split("::")[0]
-        test_filename = Path(test_file_path_str).name
+        test_file_path = nodeid.split("::")[0]
+        return self._infer_source_path_from_imports(test_file_path)
 
-        if not test_filename.startswith("test_") or not test_filename.endswith(".py"):
-            logger.warning(f"Cannot infer source path: test filename '{test_filename}' does not follow 'test_*.py' pattern.")
-            return None
-
-        source_filename = test_filename[5:]  # "test_foo.py" -> "foo.py"
-
-        # In the test environment, the project root can be a symlink.
-        # We need to resolve it to a real path for glob and other fs operations to work reliably.
-        project_real_path = self.project.root.resolve()
-
-        # Search for the source file using glob, which is robust to directory structures.
-        search_pattern = str(project_real_path / '**' / source_filename)
-        found_files = glob.glob(search_pattern, recursive=True)
-
-        if not found_files:
-            logger.warning(f"Could not find a matching source file for '{source_filename}' using glob in '{project_real_path}'")
-            return None
-
-        # Filter out test files and return the first valid source file found.
-        for file_path_str in found_files:
-            file_path = Path(file_path_str)
-
-            # Use the real project path for relativity check
-            relative_path = file_path.relative_to(project_real_path)
-
-            if "tests" not in str(relative_path):
-                logger.info(f"Inferred source path '{relative_path}' from test '{test_file_path_str}'")
-                # Return the original-style relative path, not the resolved one
-                return str(file_path.relative_to(self.project.root))
-
-        logger.warning(f"Found potential matches for '{source_filename}' but all were in a 'tests' directory: {found_files}")
-        return None
 
     async def _handle_failure_and_assess_risk(self, payload: dict):
         failed_tests = payload.get("failed_tests", [])

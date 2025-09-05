@@ -89,6 +89,7 @@ class SpecOracleAgent(BaseAgent):
     def _run_command_check(self, name: str, config: Dict[str, Any], file_path: Path) -> Dict[str, Any]:
         """Runs a specification check that is defined as a shell command."""
         command_template = config.get("command")
+        timeout = config.get("timeout", 30)
         if not command_template:
             return {"check": name, "passed": False, "output": "Error: command not defined in config."}
 
@@ -100,13 +101,13 @@ class SpecOracleAgent(BaseAgent):
                 capture_output=True,
                 text=True,
                 cwd=self.source_root,
-                timeout=30
+                timeout=timeout
             )
             passed = process.returncode == 0
             output = process.stdout if passed else process.stdout + process.stderr
             return {"check": name, "passed": passed, "output": output.strip()}
         except subprocess.TimeoutExpired:
-            return {"check": name, "passed": False, "output": "Error: Command timed out after 30 seconds."}
+            return {"check": name, "passed": False, "output": f"Error: Command timed out after {timeout} seconds."}
         except Exception as e:
             return {"check": name, "passed": False, "output": f"Error: Failed to execute command '{command}'. Exception: {e}"}
 
@@ -140,7 +141,10 @@ class SpecOracleAgent(BaseAgent):
             violations = find_disallowed_imports(tree, disallowed_list)
 
             if violations:
-                return {"check": "disallowed_imports", "passed": False, "output": "\n".join(violations)}
+                output = "Disallowed imports found:\n"
+                for v in violations:
+                    output += f"  - Import '{v['import']}' on line {v['line']}\n"
+                return {"check": "disallowed_imports", "passed": False, "output": output.strip()}
             else:
                 return {"check": "disallowed_imports", "passed": True, "output": "OK"}
         except cst.ParserSyntaxError as e:

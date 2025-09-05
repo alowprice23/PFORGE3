@@ -1,5 +1,6 @@
 from __future__ import annotations
 import orjson
+import subprocess
 
 from .base_agent import BaseAgent
 from pforge.validation.test_runner import PytestRunner
@@ -7,6 +8,8 @@ from pforge.orchestrator.signals import MsgType, Message
 from pforge.orchestrator.state_bus import PuzzleState
 from pforge.math_models.entropy import calculate_entropy
 from pforge.math_models.efficiency import compute_intelligent_efficiency
+from pforge.validation.dep_graph import DependencyGraph
+from pforge.validation.coverage_index import CoverageIndex
 
 class ObserverAgent(BaseAgent):
     """
@@ -20,6 +23,10 @@ class ObserverAgent(BaseAgent):
         super().__init__(bus, config, project)
         self.source_root = self.project.root
         self.test_runner = PytestRunner(project_root=self.source_root)
+        self.dep_graph = DependencyGraph(project_root=self.source_root)
+        self.coverage_index = CoverageIndex(project_root=self.source_root)
+        self.coverage_index.load()
+        self.tick_counter = 0
 
     async def on_tick(self):
         """
@@ -27,6 +34,17 @@ class ObserverAgent(BaseAgent):
         TESTS_FAILED event.
         """
         import xml.etree.ElementTree as ET
+
+        self.tick_counter += 1
+
+        # Rebuild dependency graph every 10 ticks
+        if self.tick_counter % 10 == 0:
+            self.dep_graph = DependencyGraph(project_root=self.source_root)
+
+        # Generate new coverage report if it's stale
+        if self.coverage_index.is_stale():
+            self.coverage_index.generate()
+            self.coverage_index.load()
 
         self.logger.info("Running test suite...")
 
@@ -46,10 +64,14 @@ class ObserverAgent(BaseAgent):
             num_tests = int(testsuite.attrib.get('tests', 0))
             num_passed = num_tests - num_failures
 
+            # Run linter and add to gaps
+            linter_gaps = self._run_linter()
+            total_gaps = num_failures + linter_gaps
+
             # Calculate metrics
             entropy = calculate_entropy(num_failures, num_passed)
             current_state = PuzzleState(
-                gaps=num_failures,
+                gaps=total_gaps,
                 total_tests=num_tests,
                 passing_tests=num_passed,
             )
@@ -57,10 +79,10 @@ class ObserverAgent(BaseAgent):
 
             metrics_message = Message(
                 type=MsgType.METRICS_UPDATED,
-                payload={"entropy": entropy, "efficiency": efficiency}
+                payload={"entropy": entropy, "efficiency": efficiency, "gaps": total_gaps}
             )
             await self.publish(MsgType.METRICS_UPDATED.value, metrics_message)
-            self.logger.info(f"Published METRICS_UPDATED event with entropy={entropy:.4f} and efficiency={efficiency:.4f}")
+            self.logger.info(f"Published METRICS_UPDATED event with entropy={entropy:.4f}, efficiency={efficiency:.4f}, gaps={total_gaps}")
 
             if num_failures > 0:
                 self.logger.info(f"Test suite failed with {num_failures} failures.")
@@ -94,3 +116,17 @@ class ObserverAgent(BaseAgent):
 
         except (ET.ParseError, FileNotFoundError, KeyError) as e:
             self.logger.error(f"Failed to parse JUnit XML report: {e}")
+
+    def _run_linter(self) -> int:
+        """Runs a linter and returns the number of issues."""
+        self.logger.info("Running linter...")
+        try:
+            result = subprocess.run(["flake8", "."], capture_output=True, text=True, cwd=self.source_root)
+            if result.stdout:
+                num_issues = len(result.stdout.strip().split('\n'))
+                self.logger.info(f"Linter found {num_issues} issues.")
+                return num_issues
+            return 0
+        except FileNotFoundError:
+            self.logger.warning("flake8 not found, skipping linter check.")
+            return 0

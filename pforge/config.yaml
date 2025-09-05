@@ -81,3 +81,6 @@ prompts:
       Provide a brief explanation and a list of method groupings for the new classes.
       For example: 'The class can be split into two new classes: `UserAuthenticator` (methods: `login`, `logout`)
       and `UserProfileManager` (methods: `get_profile`, `update_profile`).'
+  intent_router:
+    system: "You are an AI assistant that routes user requests to the appropriate tool. Your response should be a single word, which is the name of the tool to use."
+    user: "Based on the user's request, select the best tool to fulfill it. The available tools are: {tools}. The user's request is: {user_prompt}"

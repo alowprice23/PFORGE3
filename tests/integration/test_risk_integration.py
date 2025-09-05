@@ -9,15 +9,19 @@ from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
 from pforge.storage.risk_model_db import RiskModelDB
 
+from types import SimpleNamespace
+
 @pytest.fixture
 def mock_config():
     """Provides a mock config object."""
     class MockConfig:
         def __init__(self):
-            self.llm = {"model": "gpt-4-turbo"}
-            self.doctor = {"retry_limit": 3}
-            self.specifications = {"raw_config": {}}
-            self.recovery = {"enabled": False, "checks": []}
+            self.llm = SimpleNamespace(**{"model": "gpt-4-turbo"})
+            self.doctor = SimpleNamespace(**{"retry_limit": 3})
+            self.specifications = SimpleNamespace(**{"raw_config": {}})
+            self.recovery = SimpleNamespace(**{"enabled": False, "checks": []})
+            self.budget = SimpleNamespace(**{"tenant": "test-tenant", "daily_quota_tokens": 1000})
+            self.planner = SimpleNamespace(**{"effort_budget_per_tick": 30.0})
 
     return MockConfig()
 
@@ -25,7 +29,15 @@ def mock_config():
 def mock_project(tmp_path):
     """Provides a mock project."""
     (tmp_path / "pforge").mkdir()
-    (tmp_path / "pforge" / "some_feature.py").touch()
+    (tmp_path / "pforge" / "some_feature.py").write_text("def some_function(): return True")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "unit").mkdir()
+    (tests_dir / "unit" / "test_some_feature.py").write_text(
+        "from pforge.some_feature import some_function\n\n"
+        "def test_case():\n"
+        "    assert some_function() is True\n"
+    )
     return Project(root_path=tmp_path)
 
 @pytest.mark.asyncio
@@ -56,11 +68,10 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
     await bus.publish(MsgType.TESTS_FAILED.value, test_failure_msg)
     await predictor.on_tick()
 
-    # 4. Capture the first analysis and its effort mean
+    # 4. Capture the first analysis and its risk score
     first_analysis_msg = await bus.get("test_listener", timeout=1)
     assert first_analysis_msg is not None
-    initial_effort_dist = first_analysis_msg.payload['effort_distribution']
-    initial_mean_effort = np.mean(initial_effort_dist)
+    initial_risk_score = first_analysis_msg.payload['risk_score']
 
     # === Part 2: Simulate a failed fix and re-assess risk ===
 
@@ -81,11 +92,10 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
     # 7. Capture the second analysis
     second_analysis_msg = await bus.get("test_listener", timeout=1)
     assert second_analysis_msg is not None
-    updated_effort_dist = second_analysis_msg.payload['effort_distribution']
-    updated_mean_effort = np.mean(updated_effort_dist)
+    updated_risk_score = second_analysis_msg.payload['risk_score']
 
-    # 8. Assert that the mean effort is now higher due to learned risk (higher alpha)
-    assert updated_mean_effort > initial_mean_effort
+    # 8. Assert that the risk score is now higher due to learned risk
+    assert updated_risk_score > initial_risk_score
 
     # === Part 3: Ensure Planner still works (light check) ===
     planner = PlannerAgent(bus, mock_config, mock_project)

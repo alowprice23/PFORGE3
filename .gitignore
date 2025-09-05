@@ -37,6 +37,7 @@ pforge/logs/
 .pytest_cache/
 coverage/
 *.coverage
+coverage.json
 
 # IDE launch configs
 *.launch

@@ -13,6 +13,7 @@ class ClaudeClient:
     """A client for interacting with Anthropic's Claude models, with budget and retry support."""
 
     def __init__(self, api_key: str | None, model: str = "claude-3-sonnet-20240229", budget_meter: BudgetMeter | None = None):
+        logger.info("Initializing ClaudeClient...")
         self.model = model
         self.budget_meter = budget_meter
 
@@ -20,7 +21,10 @@ class ClaudeClient:
             logger.warning("Anthropic API key not provided. Client will operate in offline/stub mode.")
             self.client = None
         else:
+            logger.info("Creating Anthropic client...")
             self.client = anthropic.AsyncAnthropic(api_key=api_key)
+            logger.info("Anthropic client created.")
+        logger.info("ClaudeClient initialized.")
 
     @retry_llm()
     async def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:

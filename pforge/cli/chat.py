@@ -1,24 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-
+import threading
 from rich.console import Console
 from rich.text import Text
 
-from pforge.llm_clients.claude_client import ClaudeClient
+from pforge.config import Config
+from pforge.project import Project
+from pforge.messaging.in_memory_bus import InMemoryBus
+from pforge.orchestrator.signals import Message
+from pforge.agents.intent_router_agent import IntentRouterAgent
 from . import agent_skills as skills
 
 console = Console()
-
-# Create a mapping from skill names to the actual functions
-AVAILABLE_SKILLS = {
-    "run_tests": skills.run_tests,
-    "list_files": skills.list_files,
-    "read_file": skills.read_file,
-    "apply_patch": skills.apply_patch,
-}
 
 def start_chat_repl():
     """
@@ -27,101 +22,87 @@ def start_chat_repl():
     console.print(Text("Welcome to the pForge Interactive Chat.", style="bold green"))
     console.print("Type your requests or questions below. Type 'exit' or 'quit' to end.")
 
-    # Load the API key from an environment variable
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        console.print(Text("Error: ANTHROPIC_API_KEY environment variable not set.", style="bold red"))
-        return
+    # Basic setup for running agents standalone
+    try:
+        config = Config.load()
+    except FileNotFoundError:
+        # If the config file is not found, create a default one for the chat to work
+        config = Config(
+            llm=LLMConfig(model="gpt-4-turbo"),
+            doctor=DoctorConfig(retry_limit=3),
+            specifications=SpecificationsConfig(raw_config={}),
+            recovery=RecoveryConfig(enabled=False, checks=[])
+        )
+    project = Project(".")
+    bus = InMemoryBus()
 
-    # Pass the list of skill functions to the client
-    claude_client = ClaudeClient(api_key=api_key, tools=list(AVAILABLE_SKILLS.values()))
+    # Instantiate and run agents in the background
+    intent_router = IntentRouterAgent(bus=bus, config=config, project=project)
+
+    # For now, we'll create a simple skill dispatcher agent
+    async def skill_dispatcher():
+        bus.subscribe("dispatcher", "run_tests")
+        bus.subscribe("dispatcher", "list_files")
+        bus.subscribe("dispatcher", "read_file")
+        bus.subscribe("dispatcher", "apply_patch")
+
+        while True:
+            for topic in ["run_tests", "list_files", "read_file", "apply_patch"]:
+                while True:
+                    msg = await bus.get("dispatcher", timeout=0.1)
+                    if not msg:
+                        break
+                    skill_name = topic
+                    skill_input = msg.payload.get("input", {})
+                    console.print(Text(f"Executing skill: {skill_name} with input: {skill_input}", style="yellow"))
+
+                    skill_function = getattr(skills, skill_name, None)
+                    if skill_function:
+                        try:
+                            result = skill_function(**skill_input)
+                            await bus.publish("chat_output", Message(type="chat_response", payload={"response": result}))
+                        except Exception as e:
+                            await bus.publish("chat_output", Message(type="chat_response", payload={"response": f"Error: {e}"}))
+                    else:
+                        await bus.publish("chat_output", Message(type="chat_response", payload={"response": f"Error: Skill '{skill_name}' not found."}))
+            await asyncio.sleep(0.1)
+
+
+    def run_agents():
+        print("Starting agent thread...")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        print("Event loop created and set.")
+        try:
+            loop.run_until_complete(asyncio.gather(
+                intent_router.run_loop(),
+                skill_dispatcher()
+            ))
+        except Exception as e:
+            print(f"Error in agent thread: {e}")
+        print("Agent thread finished.")
+
+    agent_thread = threading.Thread(target=run_agents, daemon=True)
+    agent_thread.start()
 
     async def chat_loop():
-        # Hardcode the prompt for testing
-        try:
-            with open("pforge/cli/patch.txt", "r") as f:
-                patch_content = f.read()
-            prompt_text = f"Excellent. Here is the patch you generated. Please apply it to the codebase.\n\n{patch_content}"
-        except FileNotFoundError:
-            prompt_text = "Hello! What can I help you with today?"
+        bus.subscribe("chat_cli", "chat_output")
 
-        console.print(f"You> {prompt_text}")
+        while True:
+            prompt_text = await asyncio.to_thread(console.input, "You> ")
+            if prompt_text.lower() in ["exit", "quit"]:
+                break
 
-        messages = [{"role": "user", "content": prompt_text}]
+            await bus.publish("chat_input", Message(type="chat_prompt", payload={"prompt": prompt_text}))
 
-        try:
+            # Wait for a response
             while True:
-                response = await claude_client.chat(messages, max_tokens=4096)
-
-                # Append the assistant's response to the message history
-                # The response from the API is not a dict, so we need to convert it.
-                # The content can be a list of blocks (text, tool_use).
-                response_content = []
-                for block in response.content:
-                    if block.type == "text":
-                        response_content.append({"type": "text", "text": block.text})
-                    elif block.type == "tool_use":
-                        response_content.append({
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        })
-
-                messages.append({"role": response.role, "content": response_content})
-
-                if response.stop_reason != "tool_use":
-                    # If the model is done, break the loop and print the final text
+                msg = await bus.get("chat_cli", timeout=10)
+                if msg:
+                    console.print(Text(f"pForge: {msg.payload.get('response')}", style="bold blue"))
                     break
-
-                console.print(Text("pForge wants to use a tool...", style="italic yellow"))
-
-                tool_results_content = []
-                for tool_call in response.content:
-                    if tool_call.type == "tool_use":
-                        tool_name = tool_call.name
-                        tool_input = tool_call.input
-                        tool_id = tool_call.id
-
-                        console.print(Text(f"  Tool: {tool_name}, Input: {tool_input}", style="yellow"))
-
-                        if tool_name in AVAILABLE_SKILLS:
-                            skill_function = AVAILABLE_SKILLS[tool_name]
-                            try:
-                                result = skill_function(**tool_input)
-                                if isinstance(result, dict):
-                                    result = json.dumps(result, indent=2)
-                            except Exception as e:
-                                result = f"Error executing tool {tool_name}: {e}"
-
-                            tool_results_content.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": str(result),
-                            })
-                        else:
-                            tool_results_content.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": f"Error: Tool '{tool_name}' not found.",
-                                "is_error": True,
-                            })
-
-                # Add the tool results to the message history to continue the conversation
-                messages.append({"role": "user", "content": tool_results_content})
-                console.print(Text("Sending tool results back to pForge...", style="italic yellow"))
-
-            # After the loop, the last response should be a text response
-            final_text = ""
-            for block in response.content:
-                if block.type == "text":
-                    final_text += block.text + "\n"
-
-            console.print(Text("pForge:", style="bold blue"), final_text)
-
-        except Exception as e:
-            console.print(Text(f"Error during API call: {e}", style="bold red"))
-
+                else:
+                    console.print(Text("pForge is thinking...", style="italic yellow"))
 
     asyncio.run(chat_loop())
 

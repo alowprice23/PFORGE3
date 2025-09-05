@@ -27,6 +27,8 @@ def mock_config():
                     )
                 ]
             )
+            self.budget = {"tenant": "test-tenant", "daily_quota_tokens": 1000}
+            self.planner = {"effort_budget_per_tick": 30.0}
     return MockConfig()
 
 @pytest.fixture

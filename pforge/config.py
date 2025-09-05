@@ -36,6 +36,17 @@ class RecoveryConfig:
     checks: list[RecoveryCheck]
 
 @dataclass
+class BudgetConfig:
+    """Represents the 'budget' block in the config."""
+    tenant: str
+    daily_quota_tokens: int
+
+@dataclass
+class PlannerConfig:
+    """Represents the 'planner' block in the config."""
+    effort_budget_per_tick: float
+
+@dataclass
 class Config:
     """
     Top-level configuration for pForge, loaded from pforge.toml.
@@ -44,6 +55,9 @@ class Config:
     doctor: DoctorConfig
     specifications: SpecificationsConfig
     recovery: RecoveryConfig
+    budget: BudgetConfig
+    planner: PlannerConfig
+    prompts: Dict[str, Any]
 
     @staticmethod
     def load(path: Path | str = "pforge.yaml") -> Config:
@@ -52,15 +66,15 @@ class Config:
         """
         config_path = Path(path)
         if not config_path.is_file():
-            # For tests, it's ok if this is missing. Return a default config.
-            if "pytest" in str(path):
-                return Config(
-                    llm=LLMConfig(model="gpt-4-turbo"),
-                    doctor=DoctorConfig(retry_limit=3),
-                    specifications=SpecificationsConfig(raw_config={}),
-                    recovery=RecoveryConfig(enabled=False, checks=[])
-                )
-            raise FileNotFoundError(f"Configuration file not found at: {config_path}")
+            return Config(
+                llm=LLMConfig(model="gpt-4-turbo"),
+                doctor=DoctorConfig(retry_limit=3),
+                specifications=SpecificationsConfig(raw_config={}),
+                recovery=RecoveryConfig(enabled=False, checks=[]),
+                budget=BudgetConfig(tenant="pforge-dev", daily_quota_tokens=1_000_000),
+                planner=PlannerConfig(effort_budget_per_tick=30.0),
+                prompts={},
+            )
 
         with config_path.open("r") as f:
             data = yaml.safe_load(f)
@@ -77,6 +91,9 @@ class Config:
             doctor=DoctorConfig(**data.get("doctor", {"retry_limit": 3})),
             specifications=SpecificationsConfig(raw_config=data.get("specifications", {})),
             recovery=recovery_config,
+            budget=BudgetConfig(**data.get("budget", {"tenant": "pforge-dev", "daily_quota_tokens": 1_000_000})),
+            planner=PlannerConfig(**data.get("planner", {"effort_budget_per_tick": 30.0})),
+            prompts=data.get("prompts", {}),
         )
 
 # Example of how to use it:

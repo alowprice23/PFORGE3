@@ -36,7 +36,11 @@ def doctor_e2e_project():
     """Creates a temporary project with a single bug and a failing test."""
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
-        (project_dir / "pforge.yaml").write_text("doctor:\n  retry_limit: 1\n")
+        (project_dir / "pforge.yaml").write_text(
+            "doctor:\n  retry_limit: 1\n"
+            "budget:\n  tenant: test-tenant\n  daily_quota_tokens: 1000\n"
+            "planner:\n  effort_budget_per_tick: 30.0\n"
+        )
         (project_dir / "buggy.py").write_text("def my_buggy_function():\n    return 1\n")
         tests_dir = project_dir / "tests"
         tests_dir.mkdir()

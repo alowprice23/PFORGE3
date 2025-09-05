@@ -70,4 +70,5 @@ async def test_spec_oracle_detects_violation(temp_project_with_violation, mock_c
     disallowed_check = payload["checks"][0]
     assert disallowed_check["check"] == "disallowed_imports"
     assert disallowed_check["passed"] is False
+    assert "Disallowed imports found" in disallowed_check["output"]
     assert "pforge.server" in disallowed_check["output"]

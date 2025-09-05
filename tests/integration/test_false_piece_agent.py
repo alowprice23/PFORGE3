@@ -22,6 +22,9 @@ def temp_project(tmp_path):
 @pytest.fixture
 def mock_config():
     config = MagicMock()
+    config.planner.effort_budget_per_tick = 30.0
+    config.budget.tenant = "test-tenant"
+    config.budget.daily_quota_tokens = 1000
     config.get.return_value = {} # for spec_config
     return config
 

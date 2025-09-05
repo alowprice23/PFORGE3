@@ -1,0 +1,30 @@
+llm:
+  model: gpt-4-turbo
+
+doctor:
+  retry_limit: 3
+
+budget:
+  tenant: pforge-dev
+  daily_quota_tokens: 1000000
+
+specifications:
+  # Add your specifications here
+  # Example:
+  # disallowed_imports:
+  #   enabled: true
+  #   rules:
+  #     - from: "pforge.agents.*"
+  #       disallow: "pforge.server"
+
+recovery:
+  enabled: false
+  checks:
+    # - detector: "pforge.recovery.detectors.packages.check_pip_dependencies"
+    #   action: "pforge.recovery.actions.pkg_resolve.install_packages"
+
+prompts:
+  # Add your prompts here
+
+planner:
+  effort_budget_per_tick: 30.0

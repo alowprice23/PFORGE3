@@ -43,7 +43,7 @@ class PlannerAgent(BaseAgent):
         self.task_board: Dict[str, Task] = {}
         self.dispatched_tasks: set[str] = set()
         self.conflicted_files: set[str] = set()
-        self.effort_budget_per_tick = 30.0 # An arbitrary budget, increased to handle high-effort tasks
+        self.effort_budget_per_tick = self.config.planner.effort_budget_per_tick
 
         # Subscribe to events that can create or resolve tasks
         self.bus.subscribe(self.name, MsgType.METRICS_UPDATED.value)

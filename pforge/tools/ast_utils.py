@@ -1,8 +1,9 @@
 from __future__ import annotations
 import functools
-from typing import Type, Callable, List
+from typing import Type, Callable, List, Dict, Any
 
 import libcst as cst
+from libcst.metadata import PositionProvider, CodeRange
 from zss import simple_distance, Node as ZssNode
 
 # A unique object to use as a marker in metadata.
@@ -13,23 +14,35 @@ class _ImportVisitor(cst.CSTVisitor):
     """
     A LibCST visitor that finds disallowed imports in a module.
     """
+    METADATA_DEPENDENCIES = (PositionProvider,)
+
     def __init__(self, disallowed_imports: List[str]):
         self.disallowed_imports = set(disallowed_imports)
-        self.violations: List[str] = []
+        self.violations: List[Dict[str, Any]] = []
 
     def visit_Import(self, node: cst.Import) -> None:
         for alias in node.names:
             if alias.name.value in self.disallowed_imports:
-                self.violations.append(f"Disallowed direct import of '{alias.name.value}'")
+                pos = self.get_metadata(PositionProvider, node)
+                self.violations.append({
+                    "type": "direct_import",
+                    "import": alias.name.value,
+                    "line": pos.start.line,
+                })
 
     def visit_ImportFrom(self, node: cst.ImportFrom) -> None:
         if node.module is None:
             return
 
         module_name = node.module.value
+        pos = self.get_metadata(PositionProvider, node)
         # Case 1: The 'from' part is disallowed, e.g., `from pforge.server import ...`
         if module_name in self.disallowed_imports:
-            self.violations.append(f"Disallowed import from '{module_name}'")
+            self.violations.append({
+                "type": "from_import",
+                "import": module_name,
+                "line": pos.start.line,
+            })
             return # No need to check sub-imports if the whole module is banned
 
         # Case 2: A sub-module is disallowed, e.g., `from pforge import server`
@@ -43,15 +56,20 @@ class _ImportVisitor(cst.CSTVisitor):
             # Reconstruct the full imported path
             full_import_path = f"{module_name}.{alias.name.value}"
             if full_import_path in self.disallowed_imports:
-                self.violations.append(f"Disallowed import of '{full_import_path}'")
+                self.violations.append({
+                    "type": "sub_import",
+                    "import": full_import_path,
+                    "line": pos.start.line,
+                })
 
 
-def find_disallowed_imports(tree: cst.CSTNode, disallowed_list: List[str]) -> List[str]:
+def find_disallowed_imports(tree: cst.CSTNode, disallowed_list: List[str]) -> List[Dict[str, Any]]:
     """
     Parses a LibCST tree and returns a list of disallowed import violations.
     """
     visitor = _ImportVisitor(disallowed_imports=disallowed_list)
-    tree.visit(visitor)
+    wrapper = cst.MetadataWrapper(tree)
+    wrapper.visit(visitor)
     return visitor.violations
 
 class _CstNodeAdapter(ZssNode):

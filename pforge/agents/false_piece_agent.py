@@ -13,6 +13,7 @@ from pforge.orchestrator.signals import MsgType, Message
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.utils.llm_parsing import parse_llm_json_response
+from pforge.validation.dep_graph import DependencyGraph
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -35,13 +36,15 @@ class FalsePieceAgent(BaseAgent):
         super().__init__(bus, config, project)
         self.source_root = self.project.root
         self.last_detection_time = 0
+        self.dep_graph = DependencyGraph(project_root=self.source_root)
+        self.tick_counter = 0
 
         # Subscribe to commands from the Planner
         self.bus.subscribe(self.name, MsgType.ACCEPT_REMOVAL.value)
 
         budget_meter = BudgetMeter(
-            tenant="pforge-dev",
-            daily_quota_tokens=1_000_000,
+            tenant=self.config.budget.tenant,
+            daily_quota_tokens=self.config.budget.daily_quota_tokens,
             redis_client=self.bus.redis_client
         )
         self.llm_client = OpenAIClient(
@@ -50,25 +53,15 @@ class FalsePieceAgent(BaseAgent):
         )
 
     def _find_unreferenced_files(self) -> Set[Path]:
-        """Uses grep to find files that are not referenced by any other file."""
-        # This is a simple heuristic. A more advanced approach would use an AST
-        # parser or a tool like `vulture`.
+        """Uses the dependency graph to find files that are not referenced."""
         candidates = set()
-        all_files = list(self.source_root.rglob("*.py"))
-
-        for file_path in all_files:
-            if file_path.name == "__init__.py":
-                continue
-
-            module_name = file_path.stem
-            try:
-                cmd = f"grep -r --exclude='{file_path.name}' '{module_name}' ."
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=self.source_root)
-                if result.returncode == 1 and not result.stdout:
-                    candidates.add(file_path)
-            except Exception as e:
-                logger.error(f"Error running grep for {file_path}: {e}")
-
+        for node in self.dep_graph.graph.nodes:
+            if self.dep_graph.graph.in_degree(node) == 0:
+                # Exclude __init__.py files as they are often unreferenced
+                # but are not false pieces.
+                if Path(node).name == "__init__.py":
+                    continue
+                candidates.add(self.source_root / node)
         return candidates
 
     async def on_tick(self):
@@ -77,6 +70,13 @@ class FalsePieceAgent(BaseAgent):
         1. Periodically scans for new false pieces to propose.
         2. Checks for and executes any approved removal tasks.
         """
+        self.tick_counter += 1
+
+        # Rebuild dependency graph every 10 ticks (50 seconds)
+        # This is to ensure the graph is reasonably up-to-date.
+        if self.tick_counter % 10 == 0:
+            self.dep_graph = DependencyGraph(project_root=self.source_root)
+
         # --- 1. Execute approved removals ---
         await self._handle_accepted_removals()
 

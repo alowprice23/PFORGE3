@@ -27,6 +27,8 @@ async def test_formatter_agent(temp_file):
             self.doctor = {"retry_limit": 3}
             self.specifications = {"raw_config": {}}
             self.recovery = {"enabled": False, "checks": []}
+            self.budget = {"tenant": "test-tenant", "daily_quota_tokens": 1000}
+            self.planner = {"effort_budget_per_tick": 30.0}
 
     config = MockConfig()
     project = Project(root_path=temp_file.parent)

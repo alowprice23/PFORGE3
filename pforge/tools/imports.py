@@ -178,11 +178,13 @@ class ImportRewriter(ContextAwareTransformer):
         return updated_node
 
 
-def rewrite_imports(project: 'Project', symbol: str, old_path: str, new_path: str):
+def rewrite_imports(project: 'Project', symbol: str, old_path: str, new_path: str) -> list[str]:
     """
     Finds and rewrites all imports of a symbol in a project.
+    Returns a list of modified file paths.
     """
     import_locations = find_symbol_imports(project, symbol, old_path)
+    modified_files = []
 
     old_module = old_path.replace('.py', '').replace('/', '.')
     new_module = new_path.replace('.py', '').replace('/', '.')
@@ -201,5 +203,8 @@ def rewrite_imports(project: 'Project', symbol: str, old_path: str, new_path: st
             final_tree = modified_tree.visit(add_imports_visitor)
 
             project.write_file(file_path, final_tree.code)
+            modified_files.append(file_path)
         except Exception as e:
             print(f"Could not rewrite imports in {file_path}: {e}")
+
+    return modified_files
