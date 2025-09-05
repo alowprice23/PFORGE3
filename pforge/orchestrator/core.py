@@ -52,7 +52,7 @@ class Orchestrator:
             self.agents.append(agent_instance)
             logger.info("Instantiated agent: %s", name)
 
-    async def run(self) -> bool:
+    async def run(self, timeout: float | None = None) -> bool:
         """
         Starts the agent run loops and the message bus.
         Returns True if the puzzle is solved, False otherwise.
@@ -75,8 +75,11 @@ class Orchestrator:
             await self.bus.publish(MsgType.TESTS_FAILED.value, initial_message)
 
         try:
-            # Wait for the completion event to be set
-            await self.completion_event.wait()
+            # Wait for the completion event to be set, with an optional timeout
+            await asyncio.wait_for(self.completion_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("Orchestrator run timed out.")
+            self.success = False
         except asyncio.CancelledError:
             logger.info("Orchestrator run cancelled.")
         finally:
@@ -91,6 +94,10 @@ class Orchestrator:
             logger.info("Orchestrator finished.")
 
         return self.success
+
+    def stop(self):
+        """Stops the orchestrator and all its agents."""
+        self.completion_event.set()
 
     async def _message_loop(self):
         """A loop for the orchestrator to process messages from the bus."""

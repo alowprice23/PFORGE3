@@ -64,9 +64,8 @@ class RiskModelDB:
             new_alpha = current_params['alpha']
             new_beta = current_params['beta'] + 0.5 # Increase rate on success
         else:
-            new_alpha = current_params['alpha']
-            # Decrease rate on failure, but clamp to avoid zero or negative.
-            new_beta = max(0.1, current_params['beta'] - 0.5)
+            new_alpha = current_params['alpha'] + 0.5 # Increase shape on failure
+            new_beta = current_params['beta']
 
         logger.info(f"New params for {file_path}: alpha={new_alpha}, beta={new_beta}")
         cursor = self.conn.cursor()

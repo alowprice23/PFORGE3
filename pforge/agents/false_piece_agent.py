@@ -12,6 +12,7 @@ from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
+from pforge.utils.llm_parsing import parse_llm_json_response
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -151,8 +152,8 @@ class FalsePieceAgent(BaseAgent):
         )
         try:
             response_text = await self.llm_client.chat([{"role": "user", "content": prompt}])
-            verdict = orjson.loads(response_text)
-            if verdict.get("is_false_piece") is True:
+            verdict = parse_llm_json_response(response_text)
+            if verdict and verdict.get("is_false_piece") is True:
                 logger.warning(f"False piece detected: {file_path}. Proposing for removal.")
 
                 proposal_message = Message(

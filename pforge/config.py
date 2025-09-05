@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import tomllib
+import yaml
 from typing import Any, Dict
 
 @dataclass
@@ -46,9 +46,9 @@ class Config:
     recovery: RecoveryConfig
 
     @staticmethod
-    def load(path: Path | str = "pforge.toml") -> Config:
+    def load(path: Path | str = "pforge.yaml") -> Config:
         """
-        Loads configuration from a TOML file.
+        Loads configuration from a YAML file.
         """
         config_path = Path(path)
         if not config_path.is_file():
@@ -57,12 +57,13 @@ class Config:
                 return Config(
                     llm=LLMConfig(model="gpt-4-turbo"),
                     doctor=DoctorConfig(retry_limit=3),
-                    specifications=SpecificationsConfig(raw_config={})
+                    specifications=SpecificationsConfig(raw_config={}),
+                    recovery=RecoveryConfig(enabled=False, checks=[])
                 )
             raise FileNotFoundError(f"Configuration file not found at: {config_path}")
 
-        with config_path.open("rb") as f:
-            data = tomllib.load(f)
+        with config_path.open("r") as f:
+            data = yaml.safe_load(f)
 
         recovery_data = data.get("recovery", {})
         recovery_checks = [RecoveryCheck(**check) for check in recovery_data.get("checks", [])]
@@ -72,8 +73,8 @@ class Config:
         )
 
         return Config(
-            llm=LLMConfig(model=data.get("llm", {}).get("model", "gpt-4-turbo")),
-            doctor=DoctorConfig(retry_limit=data.get("doctor", {}).get("retry_limit", 3)),
+            llm=LLMConfig(**data.get("llm", {"model": "gpt-4-turbo"})),
+            doctor=DoctorConfig(**data.get("doctor", {"retry_limit": 3})),
             specifications=SpecificationsConfig(raw_config=data.get("specifications", {})),
             recovery=recovery_config,
         )

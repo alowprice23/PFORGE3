@@ -3,7 +3,6 @@ from unittest.mock import patch
 import pytest
 
 from pforge.agents.recovery_agent import RecoveryAgent
-from pforge.config import Config, DoctorConfig, LLMConfig, SpecificationsConfig
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import MsgType
 from pforge.project import Project
@@ -13,22 +12,22 @@ from pforge.config import RecoveryCheck, RecoveryConfig
 
 @pytest.fixture
 def mock_config():
-    """Provides a default config with recovery checks enabled."""
-    recovery_config = RecoveryConfig(
-        enabled=True,
-        checks=[
-            RecoveryCheck(
-                detector="pforge.recovery.detectors.packages.check_pip_dependencies",
-                action="pforge.recovery.actions.pkg_resolve.install_packages"
+    """Provides a mock config object."""
+    class MockConfig:
+        def __init__(self):
+            self.llm = {"model": "gpt-4-turbo"}
+            self.doctor = {"retry_limit": 3}
+            self.specifications = {"raw_config": {}}
+            self.recovery = RecoveryConfig(
+                enabled=True,
+                checks=[
+                    RecoveryCheck(
+                        detector="pforge.recovery.detectors.packages.check_pip_dependencies",
+                        action="pforge.recovery.actions.pkg_resolve.install_packages"
+                    )
+                ]
             )
-        ]
-    )
-    return Config(
-        llm=LLMConfig(model="gpt-4-turbo"),
-        doctor=DoctorConfig(retry_limit=3),
-        specifications=SpecificationsConfig(raw_config={}),
-        recovery=recovery_config
-    )
+    return MockConfig()
 
 @pytest.fixture
 def mock_project(tmp_path):

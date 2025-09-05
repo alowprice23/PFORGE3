@@ -4,6 +4,7 @@ import os
 import re
 import hashlib
 from typing import TYPE_CHECKING
+from pathlib import Path
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
@@ -16,6 +17,7 @@ from pforge.validation.test_runner import PytestRunner
 from pforge.validation.selection import TestSelector
 from pforge.validation.types import run_delta_type_check
 from pforge.tools.imports import rewrite_imports
+from pforge.snapshot import ProjectSnapshot
 import libcst as cst
 
 
@@ -172,14 +174,13 @@ class FixerAgent(BaseAgent):
         failed_test_nodeid = payload.get('failed_test_nodeid')
         op_id = payload.get('op_id')
         token = payload.get('capability_token')
-        failed_fix_info = payload.get('failed_fix_info') # Get info about prior failed fixes
+        failed_fix_info = payload.get('failed_fix_info')
 
         if not all([file_path, description, op_id, token]):
             logger.error(f"Invalid FIX_TASK message received: {payload}")
             return
 
         self.receive_token(token, op_id)
-
         logger.info(f"[FixerLog] Attempting to fix file: {file_path} with op_id {op_id}")
 
         try:
@@ -190,25 +191,21 @@ class FixerAgent(BaseAgent):
             return
 
         prompt = self._build_prompt(file_path, description, original_content, failed_fix_info)
-
-        logger.info("[FixerLog] Calling LLM...")
         llm_response = ""
+        verification_result = None
+        fix_is_ok = False
+        content_sha_after = content_sha_before
+        result_msg_type = MsgType.FIX_PATCH_REJECTED # Default to rejected
+        result_payload = {
+            "file_path": file_path,
+            "description": description,
+            "failed_test_nodeid": failed_test_nodeid,
+            "op_id": op_id,
+        }
+
         try:
+            logger.info("[FixerLog] Calling LLM...")
             llm_response = await self.llm_client.chat(messages=[{"role": "user", "content": prompt}])
-        except Exception as e:
-            logger.error(f"[FixerLog] LLM call failed: {e}")
-            # Publish a rejection so the orchestrator can retry if needed
-            result_msg_type = MsgType.FIX_PATCH_REJECTED
-            result_payload = {
-                "file_path": file_path,
-                "description": description,
-                "failed_test_nodeid": failed_test_nodeid,
-                "traceback": f"LLM call failed: {e}",
-            }
-            fix_is_ok = False
-            content_sha_after = content_sha_before
-            verification_result = None
-        else:
             logger.info("[FixerLog] LLM call complete.")
 
             match = re.search(r"```python\n(.*?)\n```", llm_response, re.DOTALL)
@@ -218,86 +215,75 @@ class FixerAgent(BaseAgent):
                 logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
                 corrected_content = llm_response
 
-            if not await self.has_capability("fs:write", op_id):
-                logger.error(f"Missing 'fs:write' capability for op_id {op_id}. Aborting fix.")
-                return
+            if not await self.has_capability("fs:write", op_id) or not await self.has_capability("exec:test", op_id):
+                logger.error(f"Missing 'fs:write' or 'exec:test' capability for op_id {op_id}. Aborting fix.")
+                raise Exception("Missing required capabilities.")
 
-            try:
-                self.project.write_file(file_path, corrected_content)
-                content_sha_after = hashlib.sha256(corrected_content.encode()).hexdigest()
-            except IOError as e:
-                logger.error(f"[FixerLog] Failed to write fix to {file_path}: {e}")
-                return
+            with ProjectSnapshot(self.project) as snapshot:
+                sandbox_project = snapshot.project
+                logger.info(f"[FixerLog] Created sandbox at {sandbox_project.root}")
+                sandbox_project.write_file(file_path, corrected_content)
 
-            if not await self.has_capability("exec:test", op_id):
-                logger.error(f"Missing 'exec:test' capability for op_id {op_id}. Aborting verification.")
-                # We can't verify, so we can't proceed. Revert the change.
-                self.project.write_file(file_path, original_content)
-                return
+                # Re-initialize validation tools to point to the sandbox
+                sandbox_runner = PytestRunner(project_root=sandbox_project.root)
+                sandbox_dep_graph = DependencyGraph(project_root=sandbox_project.root)
+                sandbox_coverage_index = CoverageIndex(project_root=sandbox_project.root)
+                sandbox_coverage_index.load()
+                sandbox_selector = TestSelector(sandbox_dep_graph, sandbox_coverage_index)
 
-            # Run the full validation suite: targeted tests and delta type check.
-            logger.info(f"[FixerLog] Verifying fix for {file_path} with new validation tools...")
-            changed_files = [self.project.root / file_path]
+                logger.info(f"[FixerLog] Verifying fix in sandbox for {file_path}...")
+                changed_files = [sandbox_project.root / file_path]
 
-            # 1. Select and run tests
-            selected_tests = self.test_selector.select_tests(changed_files)
-            if selected_tests is None:
-                logger.info("[FixerLog] Running full test suite.")
-                test_result = self.test_runner.run()
-            else:
-                logger.info(f"[FixerLog] Selected {len(selected_tests)} tests to run.")
-                test_result = self.test_runner.run(targets=selected_tests)
+                selected_tests = sandbox_selector.select_tests(changed_files)
+                if selected_tests is None:
+                    logger.info("[FixerLog] Running full test suite in sandbox.")
+                    test_result = sandbox_runner.run()
+                else:
+                    logger.info(f"[FixerLog] Selected {len(selected_tests)} tests to run in sandbox.")
+                    test_result = sandbox_runner.run(targets=selected_tests)
 
-            # 2. Run delta type check
-            logger.info("[FixerLog] Running delta type check...")
-            type_check_result = run_delta_type_check(changed_files, self.dep_graph)
+                verification_result = test_result
 
-            # 3. Determine if the fix is OK
-            if not type_check_result.passed:
-                logger.warning(f"[FixerLog] MyPy check failed. stdout:\n{type_check_result.stdout}\nstderr:\n{type_check_result.stderr}")
+                logger.info("[FixerLog] Running delta type check in sandbox...")
+                type_check_result = run_delta_type_check(changed_files, sandbox_dep_graph)
 
-            fix_is_ok = test_result.passed and type_check_result.passed
-            verification_result = test_result # For proof bundle
-
-            if fix_is_ok:
-                logger.info(f"[FixerLog] Fix successful for {file_path}")
-                result_msg_type = MsgType.FIX_PATCH_APPLIED
-                result_payload = {
-                    "file_path": file_path,
-                    "op_id": op_id,
-                    "content": corrected_content,
-                    "original_content": original_content,
-                }
-
-                # Publish a delta signal indicating one gap has been closed.
-                delta_message = Message(
-                    type=MsgType.GAP_DELTA,
-                    payload={"agent_name": self.name, "value": -1}
-                )
-                await self.publish(MsgType.GAP_DELTA.value, delta_message)
-                logger.info("[FixerLog] Published GapDelta signal.")
-            else:
-                logger.warning(f"[FixerLog] Fix failed for {file_path}")
-                # Combine test and type check results for a comprehensive traceback.
-                traceback = ""
-                if not test_result.passed:
-                    traceback += f"--- Test Failures ---\n{test_result.stdout}\n{test_result.stderr}\n\n"
                 if not type_check_result.passed:
-                    traceback += f"--- Type Check Failures ---\n{type_check_result.stdout}\n"
+                    logger.warning(f"[FixerLog] MyPy check failed in sandbox. stdout:\n{type_check_result.stdout}\nstderr:\n{type_check_result.stderr}")
 
-                result_msg_type = MsgType.FIX_PATCH_REJECTED
-                result_payload = {
-                    "file_path": file_path,
-                    "description": description,
-                    "failed_test_nodeid": failed_test_nodeid,
-                    "op_id": op_id,
-                    "traceback": traceback.strip(),
-                    "content": corrected_content, # Add the failed patch content
-                }
-                self.last_applied_patch = None
-                # Revert the failed patch
-                self.project.write_file(file_path, original_content)
-                content_sha_after = content_sha_before
+                fix_is_ok = test_result.passed and type_check_result.passed
+
+                if fix_is_ok:
+                    logger.info(f"[FixerLog] Fix verified in sandbox. Committing change.")
+                    snapshot.commit(Path(file_path))
+                    content_sha_after = hashlib.sha256(corrected_content.encode()).hexdigest()
+
+                    result_msg_type = MsgType.FIX_PATCH_APPLIED
+                    result_payload.update({
+                        "content": corrected_content,
+                        "original_content": original_content,
+                    })
+                    # Publish a delta signal indicating one gap has been closed.
+                    delta_message = Message(type=MsgType.GAP_DELTA, payload={"agent_name": self.name, "value": -1})
+                    await self.publish(MsgType.GAP_DELTA.value, delta_message)
+                    logger.info("[FixerLog] Published GapDelta signal.")
+                else:
+                    logger.warning(f"[FixerLog] Fix failed verification in sandbox.")
+                    traceback = ""
+                    if not test_result.passed:
+                        traceback += f"--- Test Failures ---\n{test_result.stdout}\n{test_result.stderr}\n\n"
+                    if not type_check_result.passed:
+                        traceback += f"--- Type Check Failures ---\n{type_check_result.stdout}\n"
+
+                    result_payload.update({
+                        "traceback": traceback.strip(),
+                        "content": corrected_content,
+                    })
+
+        except Exception as e:
+            logger.error(f"[FixerLog] An error occurred during fix handling: {e}", exc_info=True)
+            result_payload["traceback"] = str(e)
+            fix_is_ok = False
+            content_sha_after = content_sha_before
 
         proof = ProofBundle(
             tree_sha="dummy_sha",

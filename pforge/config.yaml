@@ -1,0 +1,83 @@
+agents:
+  fixer:
+    tick_interval: 1.0
+  misfit:
+    tick_interval: 2.0
+    scan_interval_seconds: 300
+    lcom4_threshold: 5
+    loc_threshold: 500
+    num_methods_threshold: 20
+  false_piece:
+    detection_interval: 60.0
+  backtracker:
+    tick_interval: 1.0
+  conflict_detector:
+    tick_interval: 1.0
+  efficiency_analyst:
+    tick_interval: 0.5
+  formatter:
+    tick_interval: 1.0
+  observer:
+    tick_interval: 5.0
+  planner:
+    tick_interval: 2.0
+  predictor:
+    tick_interval: 1.0
+  recovery:
+    tick_interval: 60.0
+  self_repair:
+    tick_interval: 300.0
+  spec_oracle:
+    tick_interval: 1.0
+
+prompts:
+  misfit:
+    check_symbol_placement:
+      system: "You are an expert software architect AI. Your purpose is to analyze code for semantic correctness and suggest improvements. You must always respond in the specified JSON format."
+      user: |
+        Your task is to determine if a symbol (a function or class) is located
+        in the correct file within a project.
+
+        A 'misfit' is a symbol that would be better placed in a different existing
+        file or in a new file, based on standard software engineering principles
+        like separation of concerns, high cohesion, and the single responsibility principle.
+
+        Here is the context:
+
+        PROJECT STRUCTURE:
+        {project_structure}
+
+        CURRENT FILE: `{file_path}`
+
+        SYMBOL NAME: `{symbol_name}`
+
+        SYMBOL SOURCE CODE:
+        ```
+        {symbol_code}
+        ```
+
+        Is the symbol `{symbol_name}` a misfit in the file `{file_path}`?
+
+        Respond with a single, raw JSON object with two keys:
+        1. "misfit": boolean (true if it is a misfit, false otherwise).
+        2. "suggestion": string (if it is a misfit, suggest the most appropriate
+        file path for the symbol, e.g., "pforge/utils/helpers.py"; otherwise,
+        this should be null).
+
+        Do not add any commentary, explanations, or markdown formatting.
+        Your entire response must be only the raw JSON object.
+  large_class:
+    system: "You are an expert software architect AI."
+    user: |
+      The class `{class_name}` in file `{file_path}` is too large and complex.
+      Metrics: LCOM4={lcom4}, Lines of Code={loc}, Number of Methods={num_methods}.
+
+      Here is the source code of the class:
+      ```python
+      {class_code}
+      ```
+
+      Please suggest how to refactor this class by splitting it into smaller, more cohesive classes.
+      Provide a brief explanation and a list of method groupings for the new classes.
+      For example: 'The class can be split into two new classes: `UserAuthenticator` (methods: `login`, `logout`)
+      and `UserProfileManager` (methods: `get_profile`, `update_profile`).'

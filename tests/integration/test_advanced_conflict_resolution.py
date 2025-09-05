@@ -3,7 +3,6 @@ import pytest
 
 from pforge.agents.backtracker_agent import BacktrackerAgent
 from pforge.agents.conflict_detector_agent import ConflictDetectorAgent
-from pforge.config import Config, DoctorConfig, LLMConfig, SpecificationsConfig, RecoveryConfig
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
@@ -11,13 +10,15 @@ from pforge.project import Project
 
 @pytest.fixture
 def mock_config():
-    """Provides a default config."""
-    return Config(
-        llm=LLMConfig(model="gpt-4-turbo"),
-        doctor=DoctorConfig(retry_limit=3),
-        specifications=SpecificationsConfig(raw_config={}),
-        recovery=RecoveryConfig(enabled=False, checks=[])
-    )
+    """Provides a mock config object."""
+    class MockConfig:
+        def __init__(self):
+            self.llm = {"model": "gpt-4-turbo"}
+            self.doctor = {"retry_limit": 3}
+            self.specifications = {"raw_config": {}}
+            self.recovery = {"enabled": False, "checks": []}
+
+    return MockConfig()
 
 import subprocess
 

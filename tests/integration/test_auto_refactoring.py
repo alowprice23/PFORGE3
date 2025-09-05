@@ -33,8 +33,8 @@ def refactoring_project():
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
 
-        # Create pforge.toml
-        (project_dir / "pforge.toml").write_text("[doctor]\nretry_limit = 1\n")
+        # Create pforge.yaml
+        (project_dir / "pforge.yaml").write_text("doctor:\n  retry_limit: 1\n")
 
         # Create models/user.py with a misfit function
         models_dir = project_dir / "models"
@@ -76,7 +76,7 @@ async def test_auto_refactoring_loop(refactoring_project):
          patch("pforge.orchestrator.core.Orchestrator._handle_spec_checked", new_callable=AsyncMock):
 
         # --- Setup Orchestrator ---
-        config = Config.load(project_dir / "pforge.toml")
+        config = Config.load(project_dir / "pforge.yaml")
         project = Project(project_dir)
         orchestrator = Orchestrator(config, project)
         orchestrator.setup_agents()
@@ -90,9 +90,9 @@ async def test_auto_refactoring_loop(refactoring_project):
 
         # --- Run the orchestrator ---
         try:
-            await asyncio.wait_for(orchestrator.run(), timeout=15.0)
-        except asyncio.TimeoutError:
-            pass
+            await orchestrator.run(timeout=15.0)
+        finally:
+            orchestrator.stop()
 
         # --- Assertions ---
         user_model_content = (project_dir / "models/user.py").read_text()

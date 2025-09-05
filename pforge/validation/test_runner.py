@@ -62,7 +62,7 @@ class PytestRunner:
         self.project_root = Path(project_root).resolve()
         self.tests_run_since_last_patch: Set[str] = set()
 
-    def run(self, targets: Optional[List[str]] = None, junit_xml_path: str = "test-results.xml") -> PytestRunResult:
+    def run(self, targets: Optional[List[str]] = None, junit_xml_path: str = "test-results.xml", cwd: Optional[str | Path] = None) -> PytestRunResult:
         """
         Runs the test suite or a targeted subset of tests.
 
@@ -70,11 +70,10 @@ class PytestRunner:
             targets: An optional list of specific test files or directories to run.
                      If None, the entire test suite is run.
             junit_xml_path: The path to save the JUnit XML report to.
-
-        Returns:
-            A TestRunResult object with the outcome.
+            cwd: The working directory to run the tests in. Defaults to project root.
         """
-        junit_full_path = self.project_root / junit_xml_path
+        working_dir = Path(cwd) if cwd else self.project_root
+        junit_full_path = working_dir / junit_xml_path
 
         import sys
         command = [sys.executable, "-m", "pytest"]
@@ -86,13 +85,13 @@ class PytestRunner:
 
         command.append(f"--junit-xml={junit_full_path}")
 
-        logger.info(f"Running test command: {' '.join(command)}")
+        logger.info(f"Running test command: {' '.join(command)} in {working_dir}")
 
         try:
-            env = {"PYTHONPATH": str(self.project_root)}
+            env = {"PYTHONPATH": str(working_dir)}
             process = subprocess.run(
                 command,
-                cwd=self.project_root,
+                cwd=working_dir,
                 capture_output=True,
                 text=True,
                 check=False,

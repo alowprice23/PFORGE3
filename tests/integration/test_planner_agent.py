@@ -19,7 +19,7 @@ async def test_planner_agent_creates_fix_task():
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         project_path = Path(tmpdir)
-        (project_path / "pforge.toml").write_text("")
+        (project_path / "pforge.yaml").write_text("doctor:\n  retry_limit: 1\n")
 
         # The planner's _infer_source_from_test expects a specific structure.
         # Create a dummy source file for it to find.
@@ -34,7 +34,7 @@ async def test_planner_agent_creates_fix_task():
 
         bus = InMemoryBus()
         project = Project(project_path)
-        config = Config.load(project.root / "pforge.toml")
+        config = Config.load(project.root / "pforge.yaml")
 
         # The planner subscribes to topics on init, so it must be created before publishing
         planner = PlannerAgent(bus=bus, config=config, project=project)
