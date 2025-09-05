@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import toml
 import yaml
 from typing import Any, Dict
 
@@ -77,7 +78,10 @@ class Config:
             )
 
         with config_path.open("r") as f:
-            data = yaml.safe_load(f)
+            if config_path.suffix == ".toml":
+                data = toml.load(f)
+            else:
+                data = yaml.safe_load(f)
 
         recovery_data = data.get("recovery", {})
         recovery_checks = [RecoveryCheck(**check) for check in recovery_data.get("checks", [])]

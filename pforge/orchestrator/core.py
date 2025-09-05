@@ -165,6 +165,9 @@ class Orchestrator:
             logger.error(
                 f"Could not fix bug in {file_path} after {retry_limit} attempts. Giving up."
             )
+            await self.bus.publish(
+                MsgType.GIVE_UP.value, Message(type=MsgType.GIVE_UP, payload={"file_path": file_path})
+            )
             self.success = False
             self.completion_event.set()
 

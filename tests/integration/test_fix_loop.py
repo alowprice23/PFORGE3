@@ -44,7 +44,6 @@ def e2e_project():
 
         yield project_dir
 
-@pytest.mark.skip(reason="This test is flaky and requires a live LLM connection.")
 @pytest.mark.asyncio
 @patch("pforge.llm_clients.openai_o3_client.OpenAIClient.chat", new_callable=AsyncMock)
 async def test_e2e_full_loop(mock_llm_chat, e2e_project):
@@ -111,7 +110,7 @@ async def test_e2e_full_loop(mock_llm_chat, e2e_project):
     # --- Wait for the outcome ---
     try:
         # Wait for the FIX_PATCH_APPLIED message that signals a successful fix
-        final_message = await bus.get(test_subscriber, timeout=20.0)
+        final_message = await bus.get(test_subscriber, timeout=60.0) # Increased timeout for robustness
         assert final_message is not None
         assert final_message.type == MsgType.FIX_PATCH_APPLIED
     except TimeoutError:

@@ -44,6 +44,7 @@ class MsgType(str, Enum):
     BACKTRACK_COMPLETED = "backtrack.completed"
     PROPOSE_REMOVAL = "removal.propose"
     ACCEPT_REMOVAL = "removal.accept"
+    GIVE_UP = "system.give_up"
 
 @dataclass
 class Message:

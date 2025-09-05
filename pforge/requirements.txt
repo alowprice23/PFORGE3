@@ -29,4 +29,5 @@ fakeredis==2.23.0
 numpy==1.26.4
 pulp==2.8.0
 PyYAML==6.0.1
+toml==0.10.2
 pysat==3.2.2

@@ -34,7 +34,6 @@ def project_with_retry_limit(tmp_path):
 
 
 
-@pytest.mark.skip(reason="This test is flaky and requires a live LLM connection.")
 @pytest.mark.asyncio
 @patch("pforge.agents.observer_agent.ObserverAgent.on_tick", new_callable=AsyncMock)
 @patch("pforge.agents.fixer_agent.PytestRunner.run")
@@ -87,8 +86,18 @@ async def test_retry_loop_generates_augmented_prompt_and_stops(
         )
         await orchestrator.bus.publish(MsgType.TESTS_FAILED.value, initial_test_failure_message)
 
-        # Let the system run for a few cycles to process the retries
-        await asyncio.sleep(10)
+        # --- Wait for the outcome ---
+        bus = orchestrator.bus
+        test_subscriber = "e2e_test_listener"
+        bus.subscribe(test_subscriber, MsgType.GIVE_UP.value)
+
+        try:
+            # Wait for the GIVE_UP message that signals the end of retries
+            final_message = await bus.get(test_subscriber, timeout=20.0)
+            assert final_message is not None
+            assert final_message.type == MsgType.GIVE_UP
+        except (TimeoutError, asyncio.TimeoutError):
+            pytest.fail("Test timed out waiting for the GIVE_UP signal.")
 
         # --- Assert ---
         # The FixerAgent should have been called 3 times:
