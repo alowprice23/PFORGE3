@@ -2,9 +2,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Optional
 
-from pforge.proof.capabilities import verify_token, InvalidCapabilityError
+from pforge.proof.capabilities import verify_token, InvalidCapabilityError, check_permission
 from pforge.proof.redaction import scrub
 from pforge.orchestrator.signals import Message
 
@@ -33,8 +33,14 @@ class BaseAgent(ABC):
         self.project = project
         self.logger = logging.getLogger(f"pforge.agent.{self.name}")
         self._is_running = False
-        self._capability_tokens: Dict[str, str] = {} # Map op_id to token
-        self._verified_payloads: Dict[str, Dict] = {} # Cache for verified payloads
+        self._capability_tokens: Dict[str, str] = {}  # Map op_id to token
+        self._verified_payloads: Dict[str, Dict] = {}  # Cache for verified payloads
+        self._startup_capabilities: set[str] = set()
+
+    def grant_startup_capabilities(self, capabilities: list[str]):
+        """Grants capabilities from the config, not requiring a token."""
+        self.logger.info(f"Granting startup capabilities: {capabilities}")
+        self._startup_capabilities.update(capabilities)
 
     def receive_token(self, token: str, op_id: str):
         """
@@ -48,44 +54,60 @@ class BaseAgent(ABC):
         self.logger.info(f"Received capability token for op_id: {op_id}")
         self._capability_tokens[op_id] = token
 
-    async def has_capability(self, permission: str, op_id: str) -> bool:
+    async def has_capability(
+        self, permission: str, op_id: str, target: Optional[str] = None
+    ) -> bool:
         """
-        Checks if the agent holds a valid capability for the given permission
-        and operation ID.
+        Checks if the agent holds a valid capability for a given permission and
+        optional target (e.g., a file path).
 
-        This method verifies a token once per op_id, caching the payload to
-        allow checking multiple permissions on the same token without causing
-        a replay error.
+        This method first checks for startup-granted capabilities, then verifies
+        a token once per op_id, caching the payload to allow checking multiple
+        permissions on the same token without causing a replay error.
         """
-        # Step 1: Check for a cached, verified payload first.
-        if op_id in self._verified_payloads:
-            payload = self._verified_payloads[op_id]
-            if permission in payload.get("scope", []):
-                self.logger.info(f"Cached capability '{permission}' for op_id '{op_id}' is valid.")
-                return True
+        # Step 1: Check for startup-granted capabilities.
+        if check_permission(list(self._startup_capabilities), permission, target):
+            self.logger.info(
+                f"Capability '{permission}' for target '{target}' granted at startup."
+            )
+            return True
+
+        # A helper function to perform the token-based check.
+        def _check(payload: Dict) -> bool:
+            granted_scopes = payload.get("scope", [])
+            has_perm = check_permission(granted_scopes, permission, target)
+            if has_perm:
+                self.logger.info(
+                    f"Capability '{permission}' for target '{target}' on op_id '{op_id}' is valid."
+                )
             else:
-                self.logger.warning(f"Cached capability '{permission}' not in scope for op_id '{op_id}'.")
-                return False
+                self.logger.warning(
+                    f"Capability '{permission}' for target '{target}' on op_id '{op_id}' not in scope."
+                )
+            return has_perm
 
-        # Step 2: If not cached, verify the token from storage.
+        # Step 2: Check for a cached, verified payload.
+        if op_id in self._verified_payloads:
+            return _check(self._verified_payloads[op_id])
+
+        # Step 3: If not cached, verify the token from storage.
         token = self._capability_tokens.get(op_id)
         if not token:
-            self.logger.warning(f"No capability token found for op_id: {op_id}")
+            # If op_id is "startup", it's not a real operation, so we don't warn.
+            # This handles cases where a startup capability wasn't found and we fall through.
+            if op_id != "startup":
+                self.logger.warning(f"No capability token found for op_id: {op_id}")
             return False
 
         try:
+            # Step 4: Verify the token and cache the payload.
             payload = await verify_token(token, self.bus.redis_client)
-            # Step 3: Cache the payload on successful verification.
             self._verified_payloads[op_id] = payload
             self.logger.info(f"Token for op_id '{op_id}' verified and payload cached.")
 
-            # Step 4: Check the permission against the newly cached payload.
-            if permission in payload.get("scope", []):
-                self.logger.info(f"Capability '{permission}' for op_id '{op_id}' is valid.")
-                return True
-            else:
-                self.logger.warning(f"Capability '{permission}' not in scope for op_id '{op_id}'.")
-                return False
+            # Step 5: Check the permission against the newly verified payload.
+            return _check(payload)
+
         except InvalidCapabilityError as e:
             self.logger.error(f"Token for op_id '{op_id}' is invalid: {e}")
             # Once a token is invalid, remove it from all storage.

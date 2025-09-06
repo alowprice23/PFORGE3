@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pforge.config import Config
     from pforge.messaging.in_memory_bus import InMemoryBus
     from pforge.project import Project
+    from pforge.orchestrator.state_bus import StateBus
 
 
 logger = logging.getLogger(__name__)
@@ -37,9 +38,9 @@ class PlannerAgent(BaseAgent):
     name = "planner"
     tick_interval: float = 2.0  # Planning is more deliberate
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, state_bus: StateBus):
         super().__init__(bus, config, project)
-        self.state_bus = StateBus(bus)
+        self.state_bus = state_bus
         self.task_board: Dict[str, Task] = {}
         self.dispatched_tasks: set[str] = set()
         self.conflicted_files: set[str] = set()
@@ -176,7 +177,7 @@ class PlannerAgent(BaseAgent):
             priority=new_priority,
             effort=new_effort,
             payload=new_payload,
-            retry_count=retry_count,
+            source_path=original_task.source_path, # Preserve the source path for retries
         )
 
         self.task_board[retry_task.id] = retry_task
@@ -298,39 +299,50 @@ class PlannerAgent(BaseAgent):
             if "failed_fix_info" in task.payload:
                 fix_payload["failed_fix_info"] = task.payload["failed_fix_info"]
 
-            # Grant the FixerAgent the capability to write to this file and run tests
-            token = issue_token(actor="fixer", scope=["fs:write", "exec:test"], op_id=op_id)
+            # Grant the FixerAgent the capability to write to a specific file and run tests
+            scope = [f"fs:write:{task.source_path}", "exec:test"]
+            token = issue_token(actor="fixer", scope=scope, op_id=op_id)
             fix_payload["capability_token"] = token
 
             message = Message(type=MsgType.FIX_TASK, payload=fix_payload)
-            await self.publish(MsgType.FIX_TASK.value, message)
+            await self.bus.publish(MsgType.FIX_TASK.value, message)
             logger.info(f"Dispatched FIX_TASK for {task.source_path} with op_id {op_id}")
 
         elif task.type == "remove_file":
+            file_path = task.payload.get("file_path")
             removal_payload = {
                 "op_id": op_id,
-                "file_path": task.payload.get("file_path"),
+                "file_path": file_path,
             }
-            # Grant the FalsePieceAgent the capability to delete this file
-            token = issue_token(actor="false_piece", scope=["fs:delete"], op_id=op_id)
+            # Grant the FalsePieceAgent the capability to delete a specific file
+            scope = [f"fs:delete:{file_path}"]
+            token = issue_token(actor="false_piece", scope=scope, op_id=op_id)
             removal_payload["capability_token"] = token
 
             message = Message(type=MsgType.ACCEPT_REMOVAL, payload=removal_payload)
-            await self.publish(MsgType.ACCEPT_REMOVAL.value, message)
+            await self.bus.publish(MsgType.ACCEPT_REMOVAL.value, message)
             logger.info(f"Dispatched ACCEPT_REMOVAL for {removal_payload['file_path']} with op_id {op_id}")
 
         elif task.type == "refactor_code":
+            file_path = task.payload.get("file_path")
             refactor_payload = {
                 "op_id": op_id,
-                "file_path": task.payload.get("file_path"),
+                "file_path": file_path,
                 "symbol": task.payload.get("symbol"),
                 "suggestion": task.payload.get("suggestion"),
                 "description": task.description,
             }
-            # Grant the FixerAgent the capability to write to multiple files and run tests
-            token = issue_token(actor="fixer", scope=["fs:write", "fs:delete", "exec:test"], op_id=op_id)
+            # Grant the FixerAgent capability to write to the source file.
+            suggestion_path = task.payload.get("suggestion")
+            scope = [
+                f"fs:read:{file_path}",
+                f"fs:write:{file_path}",
+                f"fs:write:{suggestion_path}",
+                "exec:test",
+            ]
+            token = issue_token(actor="fixer", scope=scope, op_id=op_id)
             refactor_payload["capability_token"] = token
 
             message = Message(type=MsgType.REFACTOR_TASK, payload=refactor_payload)
-            await self.publish(MsgType.REFACTOR_TASK.value, message)
+            await self.bus.publish(MsgType.REFACTOR_TASK.value, message)
             logger.info(f"Dispatched REFACTOR_TASK for '{refactor_payload['symbol']}' with op_id {op_id}")

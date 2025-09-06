@@ -71,8 +71,10 @@ class FixerAgent(BaseAgent):
         self.receive_token(token, op_id)
         logger.info(f"Attempting to refactor '{symbol}' from '{original_path}' to '{new_path}'")
 
-        if not await self.has_capability("fs:read", op_id) or not await self.has_capability("fs:write", op_id):
-            logger.error(f"Missing 'fs:read' or 'fs:write' capability for op_id {op_id}. Aborting refactor.")
+        if (not await self.has_capability("fs:read", op_id, target=original_path) or
+            not await self.has_capability("fs:write", op_id, target=original_path) or
+            not await self.has_capability("fs:write", op_id, target=new_path)):
+            logger.error(f"Missing capabilities for refactor op_id {op_id}. Aborting.")
             return
 
         original_contents = {}
@@ -217,7 +219,8 @@ class FixerAgent(BaseAgent):
                 logger.warning("[FixerLog] Could not find a python markdown block in the LLM response. Using raw response.")
                 corrected_content = llm_response
 
-            if not await self.has_capability("fs:write", op_id) or not await self.has_capability("exec:test", op_id):
+            if (not await self.has_capability("fs:write", op_id, target=file_path) or
+                not await self.has_capability("exec:test", op_id)):
                 logger.error(f"Missing 'fs:write' or 'exec:test' capability for op_id {op_id}. Aborting fix.")
                 raise Exception("Missing required capabilities.")
 

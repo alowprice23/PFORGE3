@@ -48,11 +48,13 @@ class DependencyGraph:
     def __init__(self, project_root: str | Path):
         self.project_root = Path(project_root).resolve()
         self.graph = nx.DiGraph()
-        self._build_graph()
+        self.build_graph()
 
-    def _build_graph(self) -> None:
+    def build_graph(self) -> None:
         """Scans the project and builds the dependency graph."""
         logger.info("Building dependency graph...")
+        # Clear the old graph before building a new one
+        self.graph.clear()
         py_files = list(self.project_root.rglob("*.py"))
 
         for file_path in py_files:

@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
     from pforge.config import Config
     from pforge.project import Project
+    from pforge.orchestrator.state_bus import StateBus
+    from pforge.orchestrator.efficiency_engine import EfficiencyEngine
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +37,17 @@ class EfficiencyAnalystAgent(BaseAgent):
     name: str = "efficiency_analyst"
     tick_interval: float = 0.5  # Run frequently to keep state up-to-date
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(
+        self,
+        bus: InMemoryBus,
+        config: Config,
+        project: Project,
+        state_bus: StateBus,
+        efficiency_engine: EfficiencyEngine,
+    ):
         super().__init__(bus, config, project)
-        self.state_bus = StateBus(bus)
-
-        # In a real system, constants would come from a config file.
-        # Using placeholder values for now.
-        efficiency_constants = {
-            "w_g": 1.0, "w_m": 0.5, "w_f": 2.0, "w_r": 0.1,
-            "w_b": 5.0, "w_h": 0.2, "w_d": 1.0, "w_phi": 10.0
-        }
-        self.efficiency_engine = EfficiencyEngine(constants=efficiency_constants)
+        self.state_bus = state_bus
+        self.efficiency_engine = efficiency_engine
 
     async def on_startup(self):
         """Subscribe to all relevant delta signals."""

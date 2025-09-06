@@ -10,6 +10,12 @@ from pforge.math_models.entropy import calculate_entropy
 from pforge.math_models.efficiency import compute_intelligent_efficiency
 from pforge.validation.dep_graph import DependencyGraph
 from pforge.validation.coverage_index import CoverageIndex
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.config import Config
+    from pforge.project import Project
 
 class ObserverAgent(BaseAgent):
     """
@@ -19,13 +25,19 @@ class ObserverAgent(BaseAgent):
     name: str = "observer"
     tick_interval: float = 5.0  # Run tests every 5 seconds
 
-    def __init__(self, bus, config, project):
+    def __init__(
+        self,
+        bus: InMemoryBus,
+        config: Config,
+        project: Project,
+        test_runner: PytestRunner,
+        dep_graph: DependencyGraph,
+        coverage_index: CoverageIndex,
+    ):
         super().__init__(bus, config, project)
-        self.source_root = self.project.root
-        self.test_runner = PytestRunner(project_root=self.source_root)
-        self.dep_graph = DependencyGraph(project_root=self.source_root)
-        self.coverage_index = CoverageIndex(project_root=self.source_root)
-        self.coverage_index.load()
+        self.test_runner = test_runner
+        self.dep_graph = dep_graph
+        self.coverage_index = coverage_index
         self.tick_counter = 0
 
     async def on_tick(self):
@@ -48,7 +60,8 @@ class ObserverAgent(BaseAgent):
         # Rebuild dependency graph every 10 ticks
         if self.tick_counter % 10 == 0:
             if await self.has_capability("fs:read", op_id):
-                self.dep_graph = DependencyGraph(project_root=self.source_root)
+                self.logger.info("Rebuilding dependency graph...")
+                self.dep_graph.build_graph()
             else:
                 self.logger.warning("ObserverAgent lacks 'fs:read' capability, skipping dependency graph rebuild.")
 
@@ -145,7 +158,7 @@ class ObserverAgent(BaseAgent):
 
         self.logger.info("Running linter...")
         try:
-            result = subprocess.run(["flake8", "."], capture_output=True, text=True, cwd=self.source_root)
+            result = subprocess.run(["flake8", "."], capture_output=True, text=True, cwd=self.project.root)
             if result.stdout:
                 num_issues = len(result.stdout.strip().split('\n'))
                 self.logger.info(f"Linter found {num_issues} issues.")

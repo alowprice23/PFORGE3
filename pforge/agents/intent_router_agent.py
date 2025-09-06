@@ -1,30 +1,31 @@
-# pforge/agents/intent_router_agent.py
-"""
-This module contains the IntentRouterAgent. The IntentRouterAgent is
-responsible for routing intents to the correct agent.
-"""
-import os
 import asyncio
 from pforge.llm_clients.claude_client import ClaudeClient
 from pforge.orchestrator.signals import Message
 from .base_agent import BaseAgent
+from pforge.cli import agent_skills as skills
+from typing import TYPE_CHECKING
 import json
+
+if TYPE_CHECKING:
+    from pforge.config import Config
+    from pforge.messaging.in_memory_bus import InMemoryBus
+    from pforge.project import Project
 
 class IntentRouterAgent(BaseAgent):
     """The IntentRouterAgent."""
     name: str = "intent_router"
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.claude_client = None
-
-    async def on_startup(self):
-        """Initializes the Claude client."""
-        self.logger.info("IntentRouterAgent starting up...")
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+    def __init__(
+        self,
+        bus: InMemoryBus,
+        config: Config,
+        project: Project,
+        claude_client: ClaudeClient,
+    ):
+        super().__init__(bus=bus, config=config, project=project)
+        self.claude_client = claude_client
 
         self.logger.info("Loading agent skills...")
-        from pforge.cli import agent_skills as skills
         self.available_skills = {
             "run_tests": skills.run_tests,
             "list_files": skills.list_files,
@@ -33,21 +34,12 @@ class IntentRouterAgent(BaseAgent):
         }
         self.logger.info("Skills loaded.")
 
-        self.logger.info("Initializing Claude client...")
-        self.claude_client = ClaudeClient(api_key=api_key)
-        self.logger.info("Claude client initialized.")
-
         self.logger.info("Subscribing to chat_input topic...")
         self.bus.subscribe(self.name, "chat_input")
         self.logger.info("Subscribed to chat_input topic.")
-        self.logger.info("IntentRouterAgent startup complete.")
-
 
     async def on_tick(self):
         """Checks for incoming chat messages and routes them."""
-        if not self.claude_client:
-            return
-
         while True:
             message = await self.bus.get(self.name, timeout=0.1)
             if not message:

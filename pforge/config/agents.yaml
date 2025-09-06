@@ -1,98 +1,108 @@
+# This file defines the configuration for each agent in the pForge system.
+# It is loaded by the Orchestrator to instantiate and configure agents.
+
 agents:
   - name: observer
     enabled: true
-    spawn_weight: 1.0
-    spawn_threshold: 0.20
-    retire_threshold: -0.10
+    # How often the agent's main `on_tick` logic should run, in seconds.
+    tick_interval: 5.0
+    # A threshold (0.0 to 1.0) for how many other agents must be idle
+    # before this agent is allowed to spawn.
+    spawn_threshold: 0.8
+    # A threshold (0.0 to 1.0) for how many other agents must be active
+    # before this agent is forced to retire to free up resources.
+    retire_threshold: 0.0
+    # The maximum number of concurrent instances of this agent that can run.
     max_concurrency: 1
+    startup_capabilities:
+      - exec:test
+      - exec:lint
+      - fs:read
 
   - name: spec_oracle
     enabled: true
-    spawn_weight: 0.8
-    spawn_threshold: 0.15
-    retire_threshold: -0.05
-    max_concurrency: 1
-
-  - name: predictor
-    enabled: true
-    spawn_weight: 0.9
-    spawn_threshold: 0.18
-    retire_threshold: -0.08
-    max_concurrency: 1
-
-  - name: planner
-    enabled: true
-    spawn_weight: 1.2
-    spawn_threshold: 0.10
-    retire_threshold: -0.05
-    max_concurrency: 1
-
-  - name: fixer
-    enabled: true
-    spawn_weight: 1.4
-    spawn_threshold: 0.25
-    retire_threshold: 0.02
-    max_concurrency: 2
-
-  - name: misfit
-    enabled: true
-    spawn_weight: 1.1
-    spawn_threshold: 0.12
-    retire_threshold: -0.03
-    max_concurrency: 1
-
-  - name: false_piece
-    enabled: true
-    spawn_weight: 0.7
-    spawn_threshold: 0.08
-    retire_threshold: -0.02
-    max_concurrency: 1
-
-  - name: backtracker
-    enabled: true
-    spawn_weight: 0.6
-    spawn_threshold: 0.05
-    retire_threshold: -0.01
-    max_concurrency: 1
-
-  - name: conflict_detector
-    enabled: true
-    spawn_weight: 0.4
-    spawn_threshold: 0.07
-    retire_threshold: -0.02
-    max_concurrency: 1
-
-  - name: efficiency_analyst
-    enabled: true
-    spawn_weight: 0.3
+    tick_interval: 1.0
     spawn_threshold: 0.0
     retire_threshold: 0.0
     max_concurrency: 1
 
-  - name: intent_router
+  - name: planner
     enabled: true
-    spawn_weight: 0.4
+    tick_interval: 2.0
+    spawn_threshold: 0.0
+    retire_threshold: 0.0
+    max_concurrency: 1
+
+  - name: fixer
+    enabled: true
+    tick_interval: 1.0
+    spawn_threshold: 0.0
+    retire_threshold: 0.0
+    max_concurrency: 3
+
+  - name: predictor
+    enabled: true
+    tick_interval: 1.0
+    spawn_threshold: 0.0
+    retire_threshold: 0.0
+    max_concurrency: 1
+
+  - name: misfit
+    enabled: true
+    tick_interval: 2.0
+    spawn_threshold: 0.5
+    retire_threshold: 0.0
+    max_concurrency: 1
+
+  - name: false_piece
+    enabled: true
+    tick_interval: 5.0
+    spawn_threshold: 0.7
+    retire_threshold: 0.0
+    max_concurrency: 1
+
+  - name: backtracker
+    enabled: true
+    tick_interval: 1.0
+    spawn_threshold: 0.0
+    retire_threshold: 0.0
+    max_concurrency: 1
+
+  - name: summarizer
+    enabled: true
+    tick_interval: 1.0
+    spawn_threshold: 0.0
+    retire_threshold: 0.0
+    max_concurrency: 1
+
+  - name: formatter
+    enabled: true
+    tick_interval: 1.0
     spawn_threshold: 0.0
     retire_threshold: 0.0
     max_concurrency: 1
 
   - name: recovery
     enabled: true
-    spawn_weight: 1.5
+    tick_interval: 60.0
     spawn_threshold: 0.3
     retire_threshold: 0.0
     max_concurrency: 1
+    startup_capabilities:
+      - system:load_dynamic_modules
 
   - name: self_repair
     enabled: true
-    spawn_weight: 0.5
-    spawn_threshold: 0.1
-    retire_threshold: -0.1
+    tick_interval: 300.0
+    spawn_threshold: 0.3
+    retire_threshold: 0.0
     max_concurrency: 1
+    startup_capabilities:
+      - system:load_dynamic_modules
 
-  - name: summarizer
+  - name: conflict_detector
     enabled: true
-    spawn_weight: 0.5
-    spawn_threshold: 0.1
-    retire_threshold: -0.1
+    tick_interval: 1.0
+    spawn_threshold: 0.0
+    retire_threshold: 0.0
     max_concurrency: 1

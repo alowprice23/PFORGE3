@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
     from pforge.config import Config
     from pforge.project import Project
+    from pforge.storage.risk_model_db import RiskModelDB
+    from pforge.validation.coverage_index import CoverageIndex
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +29,22 @@ class PredictorAgent(BaseAgent):
     name = "predictor"
     tick_interval: float = 1.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(
+        self,
+        bus: InMemoryBus,
+        config: Config,
+        project: Project,
+        risk_db: RiskModelDB,
+        coverage_index: CoverageIndex,
+    ):
         super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.TESTS_FAILED.value)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_REJECTED.value)
         self.bus.subscribe(self.name, MsgType.BACKTRACK_COMPLETED.value)
 
-        self.risk_db = RiskModelDB()
-        self.coverage_index = CoverageIndex(project_root=self.project.root)
-        self.coverage_index.load()
+        self.risk_db = risk_db
+        self.coverage_index = coverage_index
 
     async def on_tick(self):
         """

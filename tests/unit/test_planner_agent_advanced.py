@@ -22,9 +22,11 @@ def mock_config():
 @pytest.fixture
 def test_agent(mock_bus, mock_config):
     project = MagicMock()
-    agent = PlannerAgent(bus=mock_bus, config=mock_config, project=project)
-    agent.state_bus = MagicMock()
-    agent.state_bus.get_snapshot.return_value = PuzzleState()
+    state_bus = MagicMock()
+    state_bus.get_snapshot.return_value = PuzzleState()
+    agent = PlannerAgent(
+        bus=mock_bus, config=mock_config, project=project, state_bus=state_bus
+    )
     # Mock the priority calculation to be predictable
     with patch('pforge.agents.planner_agent.calculate_priority') as mock_calc:
         # Make priority directly proportional to impact

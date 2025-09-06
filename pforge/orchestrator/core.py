@@ -5,10 +5,13 @@ from typing import Dict, List, TYPE_CHECKING, Any
 
 from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.llm_clients.openai_o3_client import OpenAIClient
+from pforge.llm_clients.claude_client import ClaudeClient
+from pforge.storage.risk_model_db import RiskModelDB
 from pforge.validation.coverage_index import CoverageIndex
 from pforge.validation.dep_graph import DependencyGraph
 from pforge.validation.selection import TestSelector
 from pforge.validation.test_runner import PytestRunner
+from pforge.orchestrator.efficiency_engine import EfficiencyEngine
 
 if TYPE_CHECKING:
     from pforge.agents.base_agent import BaseAgent
@@ -66,6 +69,11 @@ class Orchestrator:
         )
         self.dependencies['llm_client'] = llm_client
 
+        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_api_key:
+            claude_client = ClaudeClient(api_key=anthropic_api_key)
+            self.dependencies['claude_client'] = claude_client
+
         dep_graph = DependencyGraph(project_root=self.project.root)
         self.dependencies['dep_graph'] = dep_graph
 
@@ -78,6 +86,17 @@ class Orchestrator:
 
         test_runner = PytestRunner(project_root=self.project.root)
         self.dependencies['test_runner'] = test_runner
+
+        state_bus = StateBus(self.bus)
+        self.dependencies['state_bus'] = state_bus
+
+        # In a real system, constants would come from a config file.
+        efficiency_engine = EfficiencyEngine(constants=self.config.planner.efficiency_constants)
+        self.dependencies['efficiency_engine'] = efficiency_engine
+
+        risk_db = RiskModelDB()
+        self.dependencies['risk_db'] = risk_db
+
 
         logger.info("Shared dependencies created.")
 
@@ -97,14 +116,29 @@ class Orchestrator:
                 "config": self.config,
                 "project": self.project,
             }
-            if name in ["fixer", "false_piece", "summarizer_agent"]:
+            if name in ["fixer", "false_piece", "summarizer", "misfit"]:
                 agent_deps["llm_client"] = self.dependencies["llm_client"]
+            if name == "intent_router" and "claude_client" in self.dependencies:
+                agent_deps["claude_client"] = self.dependencies["claude_client"]
             if name in ["fixer", "false_piece", "observer"]:
                  agent_deps["dep_graph"] = self.dependencies["dep_graph"]
             if name == "fixer":
                 agent_deps["coverage_index"] = self.dependencies["coverage_index"]
                 agent_deps["test_selector"] = self.dependencies["test_selector"]
                 agent_deps["test_runner"] = self.dependencies["test_runner"]
+            if name == "observer":
+                agent_deps["coverage_index"] = self.dependencies["coverage_index"]
+                agent_deps["test_runner"] = self.dependencies["test_runner"]
+            if name == "self_repair":
+                agent_deps["coverage_index"] = self.dependencies["coverage_index"]
+            if name == "predictor":
+                agent_deps["risk_db"] = self.dependencies["risk_db"]
+                agent_deps["coverage_index"] = self.dependencies["coverage_index"]
+            if name == "efficiency_analyst":
+                agent_deps["state_bus"] = self.dependencies["state_bus"]
+                agent_deps["efficiency_engine"] = self.dependencies["efficiency_engine"]
+            if name == "planner":
+                agent_deps["state_bus"] = self.dependencies["state_bus"]
 
 
             # Filter agent_class.__init__ signature to pass only required deps
@@ -113,6 +147,14 @@ class Orchestrator:
             required_deps = {param: agent_deps[param] for param in sig.parameters if param in agent_deps}
 
             agent_instance = agent_class(**required_deps)
+
+            # Grant startup capabilities from config
+            agent_config = next((agent for agent in self.config.agents if agent["name"] == name), None)
+            if agent_config:
+                startup_caps = agent_config.get("startup_capabilities")
+                if startup_caps:
+                    agent_instance.grant_startup_capabilities(startup_caps)
+
             self.agents.append(agent_instance)
             logger.info("Instantiated agent: %s", name)
 

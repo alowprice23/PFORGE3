@@ -4,13 +4,20 @@ import hashlib
 import os
 from typing import Union
 
-# For a production system, you would use a proper key management system.
-# For local-only mode, we can use a stable secret from an environment variable.
-_HMAC_SECRET = os.environ.get("PFORGE_HMAC_SECRET", "pforge-local-secret-key").encode('utf-8')
+def _get_hmac_secrets() -> list[bytes]:
+    """
+    Retrieves HMAC secrets from an environment variable.
+    The primary key for signing is the first one in the list.
+    All keys are used for verification to allow for rotation.
+    """
+    secrets_str = os.environ.get("PFORGE_HMAC_SECRETS", "pforge-local-secret-key")
+    secrets = [s.strip().encode('utf-8') for s in secrets_str.split(',')]
+    return secrets
+
 
 def sign_hmac_sha256(data: Union[str, bytes]) -> str:
     """
-    Signs the given data using HMAC-SHA256 with a shared secret.
+    Signs the given data using HMAC-SHA256 with the primary shared secret.
 
     Args:
         data: The data to sign, either as a string or bytes.
@@ -21,27 +28,32 @@ def sign_hmac_sha256(data: Union[str, bytes]) -> str:
     if isinstance(data, str):
         data = data.encode('utf-8')
 
-    signature = hmac.new(_HMAC_SECRET, data, hashlib.sha256).hexdigest()
+    primary_secret = _get_hmac_secrets()[0]
+    signature = hmac.new(primary_secret, data, hashlib.sha256).hexdigest()
     return signature
 
 def verify_hmac_sha256(data: Union[str, bytes], signature: str) -> bool:
     """
-    Verifies a signature against the given data using HMAC-SHA256.
+    Verifies a signature against the given data using HMAC-SHA256. It tries
+    all available secrets to allow for key rotation.
 
     Args:
         data: The data that was signed.
         signature: The hex-encoded signature to verify.
 
     Returns:
-        True if the signature is valid, False otherwise.
+        True if the signature is valid with any of the keys, False otherwise.
     """
     if isinstance(data, str):
         data = data.encode('utf-8')
 
-    expected_signature = sign_hmac_sha256(data)
+    secrets = _get_hmac_secrets()
+    for secret in secrets:
+        expected_signature = hmac.new(secret, data, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(expected_signature, signature):
+            return True
 
-    # Use hmac.compare_digest to prevent timing attacks
-    return hmac.compare_digest(expected_signature, signature)
+    return False
 
 # In a full implementation, you would add functions for asymmetric cryptography
 # like Ed25519 here. For the foundational core, HMAC is sufficient.

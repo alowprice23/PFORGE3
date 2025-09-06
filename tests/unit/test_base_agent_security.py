@@ -2,16 +2,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pforge.agents.base_agent import BaseAgent
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.proof.capabilities import issue_token
-
-
-# A concrete agent class for testing purposes
-class ConcreteTestAgent(BaseAgent):
-    name = "test_agent"
-    async def on_tick(self):
-        pass
+from tests.helpers import ConcreteTestAgent
 
 @pytest.fixture
 def mock_bus():
@@ -33,22 +26,17 @@ import re
 
 
 @pytest.mark.asyncio
-async def test_receive_and_verify_capability(test_agent):
+async def test_receive_and_verify_general_capability(test_agent):
     op_id = "test_op_123"
-    # The first call to sadd for a new nonce should return 1
     test_agent.bus.redis_client.sadd.return_value = 1
-
-    # Issue a token with fs:write permission
-    token = issue_token(actor="test_agent", scope=["fs:write"], op_id=op_id, expires_in_seconds=10)
-
-    # Agent receives the token
+    token = issue_token(actor="test_agent", scope=["exec:test"], op_id=op_id, expires_in_seconds=10)
     test_agent.receive_token(token, op_id)
 
-    # Assert the agent now has the capability
-    assert await test_agent.has_capability("fs:write", op_id) is True
-
-    # Assert the agent does not have a different capability
-    test_agent.bus.redis_client.sadd.return_value = 1 # reset mock for next check
+    # Assert the agent has the general capability
+    assert await test_agent.has_capability("exec:test", op_id) is True
+    # A general capability should also grant a targeted request
+    assert await test_agent.has_capability("exec:test", op_id, target="some/target") is True
+    # Assert it does not have a different capability
     assert await test_agent.has_capability("fs:delete", op_id) is False
 
 @pytest.mark.asyncio
@@ -81,6 +69,10 @@ async def test_capability_is_cached_after_first_verification(test_agent):
     # This should also use the cache and fail without triggering verification.
     assert await test_agent.has_capability("fs:write", op_id) is False
     verify_mock.assert_called_once() # Assert that the mock was STILL not called again
+
+    # --- Fourth check for a targeted permission when only general is granted ---
+    assert await test_agent.has_capability("fs:read", op_id, target="/path/to/file") is True
+    verify_mock.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_publish_redacts_payload(test_agent, mock_bus):
@@ -122,29 +114,33 @@ async def test_action_denied_without_capability(test_agent):
     # Note: We are NOT issuing or receiving a token for this op_id.
 
     assert await test_agent.has_capability("fs:write", op_id) is False
+    assert await test_agent.has_capability("fs:write", op_id, target="/a/b") is False
 
 @pytest.mark.asyncio
-async def test_action_allowed_with_correct_capability(test_agent):
+async def test_general_action_allowed_with_correct_capability(test_agent):
     """
-    Tests that an agent is allowed to perform an action if it has the
+    Tests that an agent is allowed to perform a general action if it has the
     correct capability.
     """
     op_id = "test_op_101"
-    token = issue_token(actor="test_agent", scope=["fs:write"], op_id=op_id)
+    token = issue_token(actor="test_agent", scope=["exec:test"], op_id=op_id)
     test_agent.receive_token(token, op_id)
-    test_agent.bus.redis_client.sadd.return_value = 1 # Mock nonce verification
+    test_agent.bus.redis_client.sadd.return_value = 1
 
-    assert await test_agent.has_capability("fs:write", op_id) is True
+    assert await test_agent.has_capability("exec:test", op_id) is True
+    # A general capability should also grant a targeted request
+    assert await test_agent.has_capability("exec:test", op_id, target="some/target") is True
+
 
 @pytest.mark.asyncio
-async def test_action_denied_with_wrong_capability(test_agent):
+async def test_action_denied_with_wrong_general_capability(test_agent):
     """
     Tests that an agent is denied if it has a token for the op_id, but
-    that token does not contain the required permission.
+    that token does not contain the required general permission.
     """
     op_id = "test_op_112"
     token = issue_token(actor="test_agent", scope=["fs:read"], op_id=op_id)
     test_agent.receive_token(token, op_id)
-    test_agent.bus.redis_client.sadd.return_value = 1 # Mock nonce verification
+    test_agent.bus.redis_client.sadd.return_value = 1
 
     assert await test_agent.has_capability("fs:write", op_id) is False

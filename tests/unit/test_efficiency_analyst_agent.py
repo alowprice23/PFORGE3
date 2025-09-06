@@ -23,13 +23,18 @@ def mock_config():
 @pytest.fixture
 def test_agent(mock_bus, mock_config):
     project = MagicMock()
-    agent = EfficiencyAnalystAgent(bus=mock_bus, config=mock_config, project=project)
-    # Mock the dependencies that are created inside the agent
-    agent.state_bus = MagicMock()
-    agent.state_bus.get_snapshot.return_value = PuzzleState(gaps=5)
-    agent.state_bus.publish_update = AsyncMock() # This needs to be awaitable
-    agent.efficiency_engine = MagicMock()
-    agent.efficiency_engine.compute.return_value = 0.99
+    state_bus = MagicMock()
+    state_bus.get_snapshot.return_value = PuzzleState(gaps=5)
+    state_bus.publish_update = AsyncMock()
+    efficiency_engine = MagicMock()
+    efficiency_engine.compute.return_value = 0.99
+    agent = EfficiencyAnalystAgent(
+        bus=mock_bus,
+        config=mock_config,
+        project=project,
+        state_bus=state_bus,
+        efficiency_engine=efficiency_engine,
+    )
     return agent
 
 @pytest.mark.asyncio

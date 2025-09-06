@@ -1,6 +1,7 @@
 import tempfile
 from pathlib import Path
 import numpy as np
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -17,60 +18,65 @@ async def test_planner_agent_creates_fix_task():
     Tests that the PlannerAgent can consume a TESTS_FAILED event and
     produce a FIX_TASK event.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        project_path = Path(tmpdir)
-        (project_path / "pforge.yaml").write_text("doctor:\n  retry_limit: 1\n")
+    # Patch the scrub function to prevent redaction of the test payload
+    mock_report = MagicMock()
+    mock_report.total_redactions = 0
+    with patch('pforge.agents.base_agent.scrub', side_effect=lambda x: (x, mock_report)) as mock_scrub:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_path = Path(tmpdir)
+            (project_path / "pforge.yaml").write_text("doctor:\n  retry_limit: 1\n")
 
-        # The planner's _infer_source_from_test expects a specific structure.
-        # Create a dummy source file for it to find.
-        source_dir = project_path / "pforge"
-        source_dir.mkdir()
-        (source_dir / "buggy_module.py").touch()
+            # The planner's _infer_source_from_test expects a specific structure.
+            # Create a dummy source file for it to find.
+            source_dir = project_path / "pforge"
+            source_dir.mkdir()
+            (source_dir / "buggy_module.py").touch()
 
-        tests_dir = project_path / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "test_buggy_module.py").touch()
+            tests_dir = project_path / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_buggy_module.py").touch()
 
 
-        bus = InMemoryBus()
-        project = Project(project_path)
-        config = Config.load(project.root / "pforge.yaml")
+            bus = InMemoryBus()
+            project = Project(project_path)
+            config = Config.load(project.root / "pforge.yaml")
 
-        # The planner subscribes to topics on init, so it must be created before publishing
-        planner = PlannerAgent(bus=bus, config=config, project=project)
+            # The planner subscribes to topics on init, so it must be created before publishing
+            state_bus = MagicMock()
+            planner = PlannerAgent(bus=bus, config=config, project=project, state_bus=state_bus)
 
-        # The test needs to listen for the FIX_TASK message
-        test_subscriber_name = "test_fix_task_listener"
-        bus.subscribe(test_subscriber_name, MsgType.FIX_TASK.value)
+            # The test needs to listen for the FIX_TASK message
+            test_subscriber_name = "test_fix_task_listener"
+            bus.subscribe(test_subscriber_name, MsgType.FIX_TASK.value)
 
-        # Simulate a TASK_ANALYZED event, which is what the PlannerAgent actually consumes.
-        analyzed_event = Message(
-            type=MsgType.TASK_ANALYZED,
-            payload={
-                "original_failure": {
-                    "failed_tests": [{
-                        "nodeid": "tests/test_buggy_module.py::test_buggy_function_returns_fixed",
-                        "traceback": "AssertionError: assert 'bug' == 'fixed'"
-                    }]
-                },
-                "effort_distribution": np.array([1.0, 2.0, 3.0]),
-                "inferred_source_path": "pforge/buggy_module.py"
-            }
-        )
-        # Publish to the topic the planner is listening on
-        await bus.publish(MsgType.TASK_ANALYZED.value, analyzed_event)
+            # Simulate a TASK_ANALYZED event, which is what the PlannerAgent actually consumes.
+            analyzed_event = Message(
+                type=MsgType.TASK_ANALYZED,
+                payload={
+                    "original_failure": {
+                        "failed_tests": [{
+                            "nodeid": "tests/test_buggy_module.py::test_buggy_function_returns_fixed",
+                            "traceback": "AssertionError: assert 'bug' == 'fixed'"
+                        }]
+                    },
+                    "effort_distribution": np.array([1.0, 2.0, 3.0]),
+                    "inferred_source_path": "pforge/buggy_module.py"
+                }
+            )
+            # Publish to the topic the planner is listening on
+            await bus.publish(MsgType.TASK_ANALYZED.value, analyzed_event)
 
-        # Run the agent's on_tick method to process the message
-        await planner.on_tick()
+            # Run the agent's on_tick method to process the message
+            await planner.on_tick()
 
-        # Check for the FIX_TASK event
-        fix_task_message = await bus.get(test_subscriber_name, timeout=2.0)
+            # Check for the FIX_TASK event
+            fix_task_message = await bus.get(test_subscriber_name, timeout=2.0)
 
-        assert fix_task_message is not None, "PlannerAgent did not publish a FIX_TASK event."
-        assert fix_task_message.type == MsgType.FIX_TASK
+            assert fix_task_message is not None, "PlannerAgent did not publish a FIX_TASK event."
+            assert fix_task_message.type == MsgType.FIX_TASK
 
-        # Check the payload
-        payload = fix_task_message.payload
-        assert payload["file_path"] == "pforge/buggy_module.py"
-        assert "Fix the bug" in payload["description"]
-        assert "AssertionError: assert 'bug' == 'fixed'" in payload["description"]
+            # Check the payload
+            payload = fix_task_message.payload
+            assert payload["file_path"] == "pforge/buggy_module.py"
+            assert "Fix the bug" in payload["description"]
+            assert "AssertionError: assert 'bug' == 'fixed'" in payload["description"]

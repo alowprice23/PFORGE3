@@ -33,12 +33,28 @@ async def test_false_piece_propose_and_remove_flow(temp_project, mock_config):
     bus = InMemoryBus()
 
     # Mock the LLM client to always confirm the file is a false piece
-    with patch('pforge.agents.false_piece_agent.OpenAIClient') as mock_llm:
+    mock_report = MagicMock()
+    mock_report.total_redactions = 0
+    with patch('pforge.agents.base_agent.scrub', side_effect=lambda x: (x, mock_report)), \
+         patch('pforge.agents.false_piece_agent.OpenAIClient') as mock_llm:
         mock_llm.return_value.chat = AsyncMock(return_value='{"is_false_piece": true}')
 
         # Initialize the agents
-        fp_agent = FalsePieceAgent(bus=bus, config=mock_config, project=temp_project)
-        planner_agent = PlannerAgent(bus=bus, config=mock_config, project=temp_project)
+        mock_llm_client = mock_llm.return_value
+        mock_dep_graph = MagicMock()
+        # Mock the dependency graph to return our unused file
+        mock_dep_graph.graph.nodes = ["src/main.py", "src/utils.py", "src/unused.py"]
+        mock_dep_graph.graph.in_degree.return_value = 0
+
+        fp_agent = FalsePieceAgent(
+            bus=bus,
+            config=mock_config,
+            project=temp_project,
+            llm_client=mock_llm_client,
+            dep_graph=mock_dep_graph,
+        )
+        state_bus = MagicMock()
+        planner_agent = PlannerAgent(bus=bus, config=mock_config, project=temp_project, state_bus=state_bus)
 
         # 1. Run FalsePieceAgent to detect and propose
         fp_agent.detection_interval = 0 # ensure it runs now

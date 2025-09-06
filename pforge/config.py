@@ -3,7 +3,7 @@ Configuration loading and management for pForge.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import toml
 import yaml
@@ -46,11 +46,12 @@ class BudgetConfig:
 class PlannerConfig:
     """Represents the 'planner' block in the config."""
     effort_budget_per_tick: float
+    efficiency_constants: Dict[str, float] = field(default_factory=dict)
 
 @dataclass
 class Config:
     """
-    Top-level configuration for pForge, loaded from pforge.toml.
+    Top-level configuration for pForge, loaded from pforge.yaml.
     """
     llm: LLMConfig
     doctor: DoctorConfig
@@ -59,9 +60,10 @@ class Config:
     budget: BudgetConfig
     planner: PlannerConfig
     prompts: Dict[str, Any]
+    agents: list[Dict[str, Any]]
 
     @staticmethod
-    def load(path: Path | str = "pforge.yaml") -> Config:
+    def load(path: Path | str = "pforge.yaml", agents_path: Path | str = "pforge/config/agents.yaml") -> Config:
         """
         Loads configuration from a YAML file.
         """
@@ -75,6 +77,7 @@ class Config:
                 budget=BudgetConfig(tenant="pforge-dev", daily_quota_tokens=1_000_000),
                 planner=PlannerConfig(effort_budget_per_tick=30.0),
                 prompts={},
+                agents=[],
             )
 
         with config_path.open("r") as f:
@@ -82,6 +85,14 @@ class Config:
                 data = toml.load(f)
             else:
                 data = yaml.safe_load(f)
+
+        agents_config_path = Path(agents_path)
+        if agents_config_path.is_file():
+            with agents_config_path.open("r") as f:
+                agents_data = yaml.safe_load(f)
+        else:
+            agents_data = {"agents": []}
+
 
         recovery_data = data.get("recovery", {})
         recovery_checks = [RecoveryCheck(**check) for check in recovery_data.get("checks", [])]
@@ -98,6 +109,7 @@ class Config:
             budget=BudgetConfig(**data.get("budget", {"tenant": "pforge-dev", "daily_quota_tokens": 1_000_000})),
             planner=PlannerConfig(**data.get("planner", {"effort_budget_per_tick": 30.0})),
             prompts=data.get("prompts", {}),
+            agents=agents_data.get("agents", []),
         )
 
 # Example of how to use it:

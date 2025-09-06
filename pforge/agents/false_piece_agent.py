@@ -70,7 +70,8 @@ class FalsePieceAgent(BaseAgent):
         # Rebuild dependency graph every 10 ticks (50 seconds)
         # This is to ensure the graph is reasonably up-to-date.
         if self.tick_counter % 10 == 0:
-            self.dep_graph = DependencyGraph(project_root=self.source_root)
+            logger.info("Rebuilding dependency graph...")
+            self.dep_graph.build_graph()
 
         # --- 1. Execute approved removals ---
         await self._handle_accepted_removals()
@@ -106,7 +107,7 @@ class FalsePieceAgent(BaseAgent):
                 self.receive_token(token, op_id)
 
                 # The Planner must grant the capability to delete the file.
-                if await self.has_capability("fs:delete", op_id):
+                if await self.has_capability("fs:delete", op_id, target=file_path_str):
                     try:
                         self.project.delete_file(file_path_str)
                         logger.info(f"Successfully deleted false piece: {file_path_str}")

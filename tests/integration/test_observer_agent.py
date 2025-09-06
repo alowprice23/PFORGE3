@@ -8,6 +8,10 @@ from pforge.config import Config
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import MsgType
 from pforge.project import Project
+from pforge.validation.test_runner import PytestRunner
+from pforge.validation.dep_graph import DependencyGraph
+from pforge.validation.coverage_index import CoverageIndex
+from unittest.mock import MagicMock
 
 
 @pytest.mark.asyncio
@@ -35,7 +39,19 @@ async def test_observer_agent_detects_failure():
         project = Project(project_path)
         config = Config.load(project.root / "pforge.yaml")
 
-        observer = ObserverAgent(bus=bus, config=config, project=project)
+        test_runner = PytestRunner(project_root=project.root)
+        dep_graph = DependencyGraph(project_root=project.root)
+        coverage_index = CoverageIndex(project_root=project.root)
+        coverage_index.load()
+
+        observer = ObserverAgent(
+            bus=bus,
+            config=config,
+            project=project,
+            test_runner=test_runner,
+            dep_graph=dep_graph,
+            coverage_index=coverage_index,
+        )
 
         # Subscribe to the event stream to listen for the result
         test_subscriber_name = "test_listener"

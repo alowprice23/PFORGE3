@@ -40,13 +40,9 @@ class RecoveryAgent(BaseAgent):
         On startup, load the health checks from the config, but only if the
         agent has the required capability.
         """
-        # For simulation, we grant the token directly. In a real system,
-        # this would be provided securely at startup.
-        startup_op_id = f"recovery_startup_{int(time.time())}"
-        token = issue_token(self.name, ["system:load_dynamic_modules"], startup_op_id)
-        self.receive_token(token, startup_op_id)
-
-        if await self.has_capability("system:load_dynamic_modules", startup_op_id):
+        # The op_id "startup" is a special value that signifies a check against
+        # capabilities granted at startup, not from a specific operation token.
+        if await self.has_capability("system:load_dynamic_modules", "startup"):
             logger.info("RecoveryAgent has 'system:load_dynamic_modules' capability. Loading health checks.")
             self.health_checks = self._load_health_checks()
         else:
@@ -100,14 +96,8 @@ class RecoveryAgent(BaseAgent):
         """
         op_id = f"recovery_action_{action.__name__}_{uuid.uuid4()}"
 
-        # In a real system, the orchestrator/planner would grant this token
-        # based on the detected failure. For this simulation, we grant it directly.
-        # A more granular capability like f"exec:{action.__name__}" could be used.
-        token = issue_token(self.name, ["exec:recovery_action"], op_id)
-        self.receive_token(token, op_id)
-
-        if not await self.has_capability("exec:recovery_action", op_id):
-            logger.error(f"Attempted to run recovery action '{action.__name__}' without 'exec:recovery_action' capability for op_id {op_id}.")
+        if not await self.has_capability("exec:recovery_action", "startup"):
+            logger.error(f"Attempted to run recovery action '{action.__name__}' without 'exec:recovery_action' capability.")
             return
 
         logger.info(f"Executing recovery action '{action.__name__}'...")

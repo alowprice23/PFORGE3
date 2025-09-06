@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
     from pforge.config import Config
     from pforge.project import Project
+    from pforge.llm_clients.openai_o3_client import OpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -48,19 +49,10 @@ class MisfitAgent(BaseAgent):
     name = "misfit"
     tick_interval: float = 2.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, llm_client: OpenAIClient):
         super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
-
-        budget_meter = BudgetMeter(
-            tenant=self.config.budget.tenant,
-            daily_quota_tokens=self.config.budget.daily_quota_tokens,
-            redis_client=self.bus.redis_client
-        )
-        self.llm_client = OpenAIClient(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            budget_meter=budget_meter
-        )
+        self.llm_client = llm_client
 
     def _extract_symbols(self, file_content: str) -> dict[str, cst.CSTNode]:
         """Extracts function and class definition nodes from file content."""

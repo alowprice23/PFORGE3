@@ -118,3 +118,40 @@ async def verify_token(token: str, redis_client: redis.Redis) -> Dict[str, Any]:
 
 
     return payload
+
+
+def check_permission(
+    granted_scopes: List[str],
+    required_permission: str,
+    target: str | None = None
+) -> bool:
+    """
+    Checks if a required permission is satisfied by the granted scopes.
+
+    This supports both simple string permissions (e.g., "exec:test") and
+    targeted, resource-specific permissions (e.g., "fs:write:/path/to/file").
+    A general permission (e.g., "fs:write") grants permission for any target.
+
+    Args:
+        granted_scopes: A list of scope strings from a capability token.
+        required_permission: The permission being requested (e.g., "fs:write").
+        target: The specific resource the permission is for (e.g., a file path).
+
+    Returns:
+        True if the permission is granted, False otherwise.
+    """
+    # The exact, specific permission string we are looking for, if a target is provided.
+    required_specific_permission = f"{required_permission}:{target}" if target else None
+
+    for scope in granted_scopes:
+        # Case 1: A general permission is granted, which covers any specific request.
+        # Example: granted_scopes = ["fs:write"], required = "fs:write" with target "/foo.py"
+        if scope == required_permission:
+            return True
+
+        # Case 2: A specific permission is granted that exactly matches the request.
+        # Example: granted_scopes = ["fs:write:/foo.py"], required = "fs:write" with target "/foo.py"
+        if required_specific_permission and scope == required_specific_permission:
+            return True
+
+    return False

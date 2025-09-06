@@ -1,75 +1,58 @@
-# Key Rotation Procedure
+# HMAC Secret Rotation Procedure
 
-This document outlines the detailed, step-by-step procedure for rotating the cryptographic keys used for signing AMP event proofs. Regular key rotation is a critical security practice to limit the impact of a potential key compromise.
+This document outlines the procedure for rotating the HMAC shared secrets used for signing capability tokens. Regular secret rotation is a critical security practice to limit the impact of a potential secret compromise.
 
-## 1. Generate New Key Pair
+The `pforge` system supports zero-downtime secret rotation. The verification component can check a signature against multiple secrets, while the signing component always uses the newest secret.
 
-The first step is to generate a new RSA private/public key pair. We will use `openssl` for this. The private key should be at least 2048 bits.
+## How it Works
 
-**Command:**
+The system retrieves a list of secrets from the `PFORGE_HMAC_SECRETS` environment variable.
+
+*   The variable should contain a comma-separated list of secrets.
+*   **The first secret in the list is the primary secret**, used for signing all new tokens.
+*   All secrets in the list are used for verifying existing tokens.
+
+This design allows you to introduce a new secret for signing while still being able to validate tokens that were signed with an older secret.
+
+## Rotation Steps
+
+### 1. Add the New Secret
+
+Update the `PFORGE_HMAC_SECRETS` environment variable in your deployment environment (e.g., your `.env` file, Kubernetes secret, or CI/CD variable store).
+
+**Add the new secret to the beginning of the comma-separated list.**
+
+**Example:**
+
+If your current variable is:
+`PFORGE_HMAC_SECRETS="old-secret-key"`
+
+Generate a new, strong, random secret. You can use a command like this:
 ```bash
-# Generate a new 2048-bit RSA private key
-openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:2048
-
-# Extract the public key from the private key
-openssl rsa -pubout -in private_key.pem -out public.pem.new
+openssl rand -hex 32
 ```
 
-**Security Warning:**
-*   The `private_key.pem` file is highly sensitive. It should be stored in a secure location with strict access controls, such as a hardware security module (HSM) or a secure vault system (e.g., HashiCorp Vault, AWS KMS).
-*   **DO NOT** commit the private key to version control.
+Update the variable to:
+`PFORGE_HMAC_SECRETS="your-new-strong-secret,old-secret-key"`
 
-## 2. Deploy the New Public Key
+### 2. Deploy the Change
 
-The new public key (`public.pem.new`) must be deployed to all systems that need to verify proof signatures. In the `pforge` system, this means replacing the existing `public.pem` file.
+Roll out this environment variable change to all running instances of the `pforge` application.
 
-**Steps:**
-1.  **Backup the old public key:**
-    ```bash
-    mv pforge/policies/signing/public.pem pforge/policies/signing/public.pem.old
-    ```
-2.  **Install the new public key:**
-    ```bash
-    mv public.pem.new pforge/policies/signing/public.pem
-    ```
-3.  **Commit and deploy the change:**
-    ```bash
-    git add pforge/policies/signing/public.pem
-    git commit -m "feat(security): Rotate proof signing public key"
-    # Follow your standard deployment process to roll this change out to all servers.
-    ```
+Once deployed:
+*   All new capability tokens will be signed using `"your-new-strong-secret"`.
+*   The system will still be able to verify tokens signed with `"old-secret-key"`.
 
-## 3. Transition Period (Zero-Downtime Rotation)
+This ensures a seamless transition with no downtime.
 
-To ensure a smooth transition without service interruption, both the old and new keys should be considered valid for a period of time. The `pforge` system is designed to handle this by attempting to verify signatures with multiple keys.
+### 3. Decommission the Old Secret
 
-The `proof.verifier` component should be configured to check signatures against both `public.pem` (the new key) and `public.pem.old` (the old key).
+After a suitable transition period (e.g., 24-48 hours, or the maximum lifetime of a capability token), you can safely remove the old secret.
 
-**Note:** This functionality is not yet implemented in the current version of the verifier. A future enhancement will allow specifying multiple public keys for verification. For now, the transition requires a brief maintenance window or careful coordination.
+**Update the environment variable again, removing the old secret from the list.**
 
-## 4. Activate the New Private Key
+**Example:**
 
-Once the new public key has been deployed to all verifier instances, you can begin signing new proofs with the new private key.
+`PFORGE_HMAC_SECRETS="your-new-strong-secret"`
 
-This step involves updating the configuration of the signing service or agent to point to the new `private_key.pem` file. The exact procedure depends on how the private key is managed in your environment.
-
-## 5. Decommission the Old Key
-
-After a suitable transition period (e.g., 24-48 hours) to ensure all in-flight events signed with the old key have been processed, you can decommission the old key.
-
-**Steps:**
-1.  **Remove the old public key:**
-    ```bash
-    rm pforge/policies/signing/public.pem.old
-    ```
-2.  **Commit and deploy this change:**
-    ```bash
-    git add pforge/policies/signing/public.pem.old
-    git commit -m "chore(security): Decommission old proof signing key"
-    # Deploy the change.
-    ```
-3.  **Securely delete the old private key:** Follow your organization's policy for the secure destruction of cryptographic material.
-
-## Automated Script
-
-A helper script to automate steps 1 and 2 can be found at `pforge/scripts/rotate_keys.sh`. This script will be created in a subsequent step.
+Deploy this change. Now, the system will only recognize the new secret for both signing and verification. Any tokens signed with the old secret will no longer be valid.

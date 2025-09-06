@@ -71,7 +71,7 @@ async def test_auto_refactoring_loop(refactoring_project):
     """
     project_dir = refactoring_project
 
-    with patch("pforge.agents.misfit_agent.OpenAIClient", new=FakeMisfitLLM), \
+    with patch("pforge.orchestrator.core.OpenAIClient", new=FakeMisfitLLM), \
          patch("redis.asyncio.from_url", return_value=fakeredis.aioredis.FakeRedis()), \
          patch("pforge.orchestrator.core.Orchestrator._handle_spec_checked", new_callable=AsyncMock):
 

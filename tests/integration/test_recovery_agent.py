@@ -29,6 +29,12 @@ def mock_config():
             )
             self.budget = {"tenant": "test-tenant", "daily_quota_tokens": 1000}
             self.planner = {"effort_budget_per_tick": 30.0}
+            self.agents = [
+                {
+                    "name": "recovery",
+                    "startup_capabilities": ["system:load_dynamic_modules", "exec:recovery_action"]
+                }
+            ]
     return MockConfig()
 
 @pytest.fixture
@@ -58,11 +64,14 @@ async def test_recovery_agent_triggers_action_on_failure(
 
     bus = InMemoryBus()
     agent = RecoveryAgent(bus, mock_config, mock_project)
+    agent.grant_startup_capabilities(mock_config.agents[0]["startup_capabilities"])
+
 
     # Subscribe to the agent's output message
     bus.subscribe("test_listener", MsgType.RECOVERY_ACTION_TAKEN.value)
 
     # 2. Act
+    await agent.on_startup()
     await agent.on_tick()
 
     # 3. Assert

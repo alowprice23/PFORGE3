@@ -7,24 +7,18 @@ from pforge.orchestrator.signals import MsgType
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.messaging.in_memory_bus import InMemoryBus
+from pforge.config import Config
+from pforge.project import Project
+
 
 logger = logging.getLogger(__name__)
 
 class SummarizerAgent(BaseAgent):
-    name = "summarizer_agent"
+    name = "summarizer"
 
-    def __init__(self, bus: InMemoryBus, *args, **kwargs):
-        super().__init__(bus, *args, **kwargs)
-        # In a real system, the budget meter would be shared.
-        budget_meter = BudgetMeter(
-            tenant=self.config.budget.tenant,
-            daily_quota_tokens=self.config.budget.daily_quota_tokens,
-            redis_client=self.bus.redis_client
-        )
-        self.llm_client = OpenAIClient(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            budget_meter=budget_meter
-        )
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, llm_client: OpenAIClient):
+        super().__init__(bus, config, project)
+        self.llm_client = llm_client
         self.bus.subscribe(self.name, MsgType.FIX_PATCH_APPLIED.value)
 
 

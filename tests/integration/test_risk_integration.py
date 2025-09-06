@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from pforge.agents.predictor_agent import PredictorAgent
 from pforge.agents.planner_agent import PlannerAgent
@@ -8,6 +8,7 @@ from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
 from pforge.storage.risk_model_db import RiskModelDB
+from pforge.validation.coverage_index import CoverageIndex
 
 from types import SimpleNamespace
 
@@ -52,7 +53,12 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
     # === Part 1: Initial failure with default risk ===
 
     # 1. Initialize agents
-    predictor = PredictorAgent(bus, mock_config, mock_project)
+    risk_db = RiskModelDB()
+    coverage_index = CoverageIndex(project_root=mock_project.root)
+    coverage_index.load()
+    predictor = PredictorAgent(
+        bus, mock_config, mock_project, risk_db=risk_db, coverage_index=coverage_index
+    )
 
     # Subscribe to the predictor's output
     bus.subscribe("test_listener", MsgType.TASK_ANALYZED.value)
@@ -98,7 +104,8 @@ async def test_risk_model_updates_and_affects_planning(mock_config, mock_project
     assert updated_risk_score > initial_risk_score
 
     # === Part 3: Ensure Planner still works (light check) ===
-    planner = PlannerAgent(bus, mock_config, mock_project)
+    state_bus = MagicMock()
+    planner = PlannerAgent(bus, mock_config, mock_project, state_bus=state_bus)
     await bus.publish(MsgType.TASK_ANALYZED.value, second_analysis_msg)
     await planner.on_tick()
     assert len(planner.task_board) == 1

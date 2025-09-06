@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
     from pforge.config import Config
     from pforge.project import Project
+    from pforge.validation.coverage_index import CoverageIndex
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,9 @@ class SelfRepairAgent(BaseAgent):
     name = "self_repair"
     tick_interval: float = 300.0  # Check every 5 minutes
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, coverage_index: CoverageIndex):
         super().__init__(bus, config, project)
-        self.coverage_index = CoverageIndex(project_root=self.project.root)
+        self.coverage_index = coverage_index
 
         # Load the index on startup if it exists and is not stale.
         if not self.coverage_index.is_stale():
