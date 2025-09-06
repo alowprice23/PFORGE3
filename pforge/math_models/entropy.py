@@ -19,3 +19,34 @@ def calculate_entropy(num_failed: int, num_passed: int) -> float:
         entropy -= p_pass * math.log2(p_pass)
 
     return entropy
+
+
+def calculate_shannon_entropy(data: str) -> float:
+    """
+    Calculates the Shannon entropy of a string.
+    """
+    if not data:
+        return 0.0
+
+    entropy = 0.0
+    for x in range(256):
+        p_x = float(data.count(chr(x))) / len(data)
+        if p_x > 0:
+            entropy += -p_x * math.log2(p_x)
+
+    return entropy
+
+
+def is_potential_secret(
+    text: str,
+    entropy_threshold: float = 4.5,
+    min_length: int = 20,
+) -> bool:
+    """
+    Determines if a string is a potential secret based on length and entropy.
+    """
+    if len(text) < min_length:
+        return False
+
+    entropy = calculate_shannon_entropy(text)
+    return entropy > entropy_threshold

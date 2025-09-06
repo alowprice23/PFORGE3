@@ -3,8 +3,10 @@ import subprocess
 import sys
 from pathlib import Path
 import tempfile
+import os
+from typing import Optional
 
-def _run_formatter(command: list[str], path: str | Path) -> tuple[str, int]:
+def _run_formatter(command: list[str], path: str | Path, cache_dir: Optional[Path] = None) -> tuple[str, int]:
     """
     A helper function to run a command-line tool and capture its output.
     It redirects to a file to prevent potential deadlocks when a synchronous
@@ -17,6 +19,10 @@ def _run_formatter(command: list[str], path: str | Path) -> tuple[str, int]:
         executable_dir = Path(sys.executable).parent
         cmd = [str(executable_dir / command[0])] + command[1:] + [str(path)]
 
+        env = os.environ.copy()
+        if cache_dir:
+            env["RUFF_CACHE_DIR"] = str(cache_dir)
+
         with log_path.open("w", encoding='utf-8') as f_out:
             process = subprocess.run(
                 cmd,
@@ -24,6 +30,7 @@ def _run_formatter(command: list[str], path: str | Path) -> tuple[str, int]:
                 stderr=subprocess.STDOUT,
                 text=True,
                 check=False,
+                env=env,
             )
 
         output = log_path.read_text(encoding='utf-8')
@@ -53,7 +60,7 @@ def run_black(path: str | Path) -> tuple[str, int]:
     return _run_formatter(["black"], path)
 
 
-def run_ruff(path: str | Path, fix: bool = True) -> tuple[str, int]:
+def run_ruff(path: str | Path, fix: bool = True, cache_dir: Optional[Path] = None) -> tuple[str, int]:
     """
     Runs the ruff linter and formatter on a given file or directory.
 
@@ -61,6 +68,7 @@ def run_ruff(path: str | Path, fix: bool = True) -> tuple[str, int]:
         path: The file or directory path to check.
         fix: If True, runs `ruff format` to automatically fix issues.
              If False, just runs `ruff check`.
+        cache_dir: The directory to use for the ruff cache.
 
     Returns:
         A tuple containing the combined stdout and stderr, and the exit code.
@@ -69,4 +77,4 @@ def run_ruff(path: str | Path, fix: bool = True) -> tuple[str, int]:
         command = ["ruff", "format"]
     else:
         command = ["ruff", "check"]
-    return _run_formatter(command, path)
+    return _run_formatter(command, path, cache_dir)

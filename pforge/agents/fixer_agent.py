@@ -32,34 +32,17 @@ class FixerAgent(BaseAgent):
     name = "fixer"
     tick_interval: float = 1.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, llm_client: OpenAIClient, dep_graph: DependencyGraph, coverage_index: CoverageIndex, test_selector: TestSelector, test_runner: PytestRunner):
         super().__init__(bus, config, project)
         self.bus.subscribe(self.name, MsgType.FIX_TASK.value)
         self.bus.subscribe(self.name, MsgType.REFACTOR_TASK.value)
 
-        # In a real system, the client would be injected or created by a factory
-        # based on config. For now, we'll instantiate one directly.
-        # The budget meter would also be shared.
-        budget_meter = BudgetMeter(
-            tenant=self.config.budget.tenant,
-            daily_quota_tokens=self.config.budget.daily_quota_tokens,
-            redis_client=self.bus.redis_client # Assuming bus exposes this
-        )
-        self.llm_client = OpenAIClient(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            budget_meter=budget_meter
-        )
-
-        # Initialize the validation tools
-        logger.info("Initializing validation tools for FixerAgent...")
-        self.dep_graph = DependencyGraph(project_root=self.project.root)
-        self.coverage_index = CoverageIndex(project_root=self.project.root)
-        # It's important to load the coverage index. If it doesn't exist,
-        # the selector will just fall back to guard tests.
-        self.coverage_index.load()
-
-        self.test_selector = TestSelector(self.dep_graph, self.coverage_index)
-        self.test_runner = PytestRunner(project_root=self.project.root)
+        # Dependencies are now injected
+        self.llm_client = llm_client
+        self.dep_graph = dep_graph
+        self.coverage_index = coverage_index
+        self.test_selector = test_selector
+        self.test_runner = test_runner
 
     async def on_tick(self):
         message = await self.bus.get(self.name)
@@ -87,6 +70,10 @@ class FixerAgent(BaseAgent):
 
         self.receive_token(token, op_id)
         logger.info(f"Attempting to refactor '{symbol}' from '{original_path}' to '{new_path}'")
+
+        if not await self.has_capability("fs:read", op_id) or not await self.has_capability("fs:write", op_id):
+            logger.error(f"Missing 'fs:read' or 'fs:write' capability for op_id {op_id}. Aborting refactor.")
+            return
 
         original_contents = {}
         modified_files = []

@@ -87,10 +87,14 @@ async def test_publish_redacts_payload(test_agent, mock_bus):
     # This secret matches a pattern in policies/redaction/patterns.yaml
     secret_api_key = "password = 'my_super_secret_password_123'"
 
-    # We will patch the COMPILED_REDACTION_PATTERNS to avoid file loading issues in tests
-    with patch('pforge.proof.redaction.COMPILED_REDACTION_PATTERNS', {
-        "password_test": re.compile(r"(password\s*[:=]\s*['\"].*['\"])", re.IGNORECASE)
-    }):
+    # We will patch the scrub method of the global redaction_manager
+    with patch('pforge.agents.base_agent.scrub') as mock_scrub:
+        # Configure the mock to return a value that indicates redaction
+        redacted_payload = {"log_message": "Some log with a secret: [REDACTED]"}
+        mock_report = MagicMock()
+        mock_report.total_redactions = 1
+        mock_scrub.return_value = (redacted_payload, mock_report)
+
         message_with_secret = Message(
             type=MsgType.OBS_TICK,
             payload={"log_message": f"Some log with a secret: {secret_api_key}"}
@@ -101,6 +105,46 @@ async def test_publish_redacts_payload(test_agent, mock_bus):
         # Check what was actually published on the bus
         published_message = mock_bus.publish.call_args[0][1]
 
-        # Assert the secret is gone and replaced with the placeholder
-        assert secret_api_key not in published_message.payload["log_message"]
-        assert "[REDACTED]" in published_message.payload["log_message"]
+        # Assert that scrub was called with the original payload
+        mock_scrub.assert_called_once_with(message_with_secret.payload)
+
+        # Assert the payload of the published message is the scrubbed one
+        assert published_message.payload == redacted_payload
+
+
+@pytest.mark.asyncio
+async def test_action_denied_without_capability(test_agent):
+    """
+    Tests that an agent is denied from performing an action if it does
+    not have the required capability for the given op_id.
+    """
+    op_id = "test_op_789"
+    # Note: We are NOT issuing or receiving a token for this op_id.
+
+    assert await test_agent.has_capability("fs:write", op_id) is False
+
+@pytest.mark.asyncio
+async def test_action_allowed_with_correct_capability(test_agent):
+    """
+    Tests that an agent is allowed to perform an action if it has the
+    correct capability.
+    """
+    op_id = "test_op_101"
+    token = issue_token(actor="test_agent", scope=["fs:write"], op_id=op_id)
+    test_agent.receive_token(token, op_id)
+    test_agent.bus.redis_client.sadd.return_value = 1 # Mock nonce verification
+
+    assert await test_agent.has_capability("fs:write", op_id) is True
+
+@pytest.mark.asyncio
+async def test_action_denied_with_wrong_capability(test_agent):
+    """
+    Tests that an agent is denied if it has a token for the op_id, but
+    that token does not contain the required permission.
+    """
+    op_id = "test_op_112"
+    token = issue_token(actor="test_agent", scope=["fs:read"], op_id=op_id)
+    test_agent.receive_token(token, op_id)
+    test_agent.bus.redis_client.sadd.return_value = 1 # Mock nonce verification
+
+    assert await test_agent.has_capability("fs:write", op_id) is False

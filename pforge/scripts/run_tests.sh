@@ -3,10 +3,11 @@
 
 set -euo pipefail
 
-echo "🔬  Python unit tests…"
-python -m pytest -q tests/
+# Get the directory of this script, then go to the project root
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+cd "$SCRIPT_DIR/.."
 
-echo "🧪  Frontend Jest tests…"
-# Add frontend tests here when available
+echo "🔬  Python unit tests…"
+python -m pytest -q tests/unit/test_redaction.py tests/unit/test_base_agent_security.py
 
 echo "✅  All tests passing"

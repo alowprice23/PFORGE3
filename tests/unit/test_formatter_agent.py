@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 
 import pytest
 
@@ -6,6 +7,7 @@ from pforge.agents import FormatterAgent
 from pforge.messaging.in_memory_bus import InMemoryBus
 from pforge.orchestrator.signals import Message, MsgType
 from pforge.project import Project
+from pforge.proof.capabilities import issue_token
 
 
 @pytest.fixture
@@ -39,8 +41,16 @@ async def test_formatter_agent(temp_file):
     bus.subscribe("test_listener_failed", MsgType.FORMATTING_FAILED.value)
 
     # Act
+    op_id = f"format_{uuid.uuid4()}"
+    token = issue_token(agent.name, ["fs:read", "fs:write"], op_id)
+
     # Publish to the TOPIC the agent is subscribed to.
-    await bus.publish(MsgType.FORMAT_FILE.value, Message(type=MsgType.FORMAT_FILE, payload={"file_path": str(temp_file.name)}))
+    payload = {
+        "file_path": str(temp_file.name),
+        "op_id": op_id,
+        "capability_token": token,
+    }
+    await bus.publish(MsgType.FORMAT_FILE.value, Message(type=MsgType.FORMAT_FILE, payload=payload))
     await asyncio.sleep(0.01) # Let the event loop process the message
     await agent.on_tick()
 

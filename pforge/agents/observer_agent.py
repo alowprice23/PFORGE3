@@ -34,17 +34,37 @@ class ObserverAgent(BaseAgent):
         TESTS_FAILED event.
         """
         import xml.etree.ElementTree as ET
+        import uuid
+        from pforge.proof.capabilities import issue_token
+
+        op_id = f"observer_tick_{uuid.uuid4()}"
+        # Grant the token for this tick's operations
+        token = issue_token(self.name, ["exec:test", "exec:lint", "fs:read"], op_id)
+        self.receive_token(token, op_id)
+
 
         self.tick_counter += 1
 
         # Rebuild dependency graph every 10 ticks
         if self.tick_counter % 10 == 0:
-            self.dep_graph = DependencyGraph(project_root=self.source_root)
+            if await self.has_capability("fs:read", op_id):
+                self.dep_graph = DependencyGraph(project_root=self.source_root)
+            else:
+                self.logger.warning("ObserverAgent lacks 'fs:read' capability, skipping dependency graph rebuild.")
+
 
         # Generate new coverage report if it's stale
         if self.coverage_index.is_stale():
-            self.coverage_index.generate()
-            self.coverage_index.load()
+            if await self.has_capability("exec:test", op_id):
+                self.coverage_index.generate()
+                self.coverage_index.load()
+            else:
+                self.logger.warning("ObserverAgent lacks 'exec:test' capability, skipping coverage generation.")
+
+
+        if not await self.has_capability("exec:test", op_id):
+            self.logger.error(f"ObserverAgent lacks 'exec:test' capability. Cannot run test suite.")
+            return
 
         self.logger.info("Running test suite...")
 
@@ -65,7 +85,7 @@ class ObserverAgent(BaseAgent):
             num_passed = num_tests - num_failures
 
             # Run linter and add to gaps
-            linter_gaps = self._run_linter()
+            linter_gaps = await self._run_linter(op_id)
             total_gaps = num_failures + linter_gaps
 
             # Calculate metrics
@@ -117,8 +137,12 @@ class ObserverAgent(BaseAgent):
         except (ET.ParseError, FileNotFoundError, KeyError) as e:
             self.logger.error(f"Failed to parse JUnit XML report: {e}")
 
-    def _run_linter(self) -> int:
+    async def _run_linter(self, op_id: str) -> int:
         """Runs a linter and returns the number of issues."""
+        if not await self.has_capability("exec:lint", op_id):
+            self.logger.warning("ObserverAgent lacks 'exec:lint' capability. Skipping linter check.")
+            return 0
+
         self.logger.info("Running linter...")
         try:
             result = subprocess.run(["flake8", "."], capture_output=True, text=True, cwd=self.source_root)

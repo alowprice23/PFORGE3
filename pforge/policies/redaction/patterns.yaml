@@ -1,14 +1,44 @@
 # Redaction Patterns
 
+# Whitelist of strings that should not be redacted, even if they match a
+# redaction pattern. This is useful for preventing false positives.
+whitelist:
+  - "example"
+  - "test"
+  - "mock"
+
 # Regular expressions for common secret formats.
 # These patterns aim to capture the entire sensitive line.
 regex:
-  - '(?i)(api_key\s*[:=]\s*[\'\"].*[\'\"])'
-  - '(?i)(password\s*[:=]\s*[\'\"].*[\'\"])'
-  - '(?i)(secret\s*[:=]\s*[\'\"].*[\'\"])'
+  # Generic credentials
+  - '(?i)(password|passwd|secret|api_key|apikey|access_token|auth_token)\s*[:=]\s*[\'\"].*[\'\"]'
+  # AWS credentials
+  - >-
+    AKIA[0-9A-Z]{16}
+  - '(?i)aws_access_key_id\s*[:=]\s*[\'\"].*[\'\"]'
+  - '(?i)aws_secret_access_key\s*[:=]\s*[\'\"].*[\'\"]'
+  # Google Cloud credentials
+  - >-
+    AIza[0-9A-Za-z\\-_]{35}
+  - '(?i)gcp_api_key\s*[:=]\s*[\'\"].*[\'\"]'
+  # Stripe API keys
+  - >-
+    sk_live_[0-9a-zA-Z]{24}
+  - >-
+    rk_live_[0-9a-zA-Z]{24}
+  # Private keys
+  - '-----BEGIN RSA PRIVATE KEY-----'
+  - '-----BEGIN EC PRIVATE KEY-----'
+  - '-----BEGIN OPENSSH PRIVATE KEY-----'
+  # Other common formats
+  - '(?i)bearer\s+[a-zA-Z0-9_\\-\\.]{20,}'
 
 # Denylist of file paths and directory names
 denylist:
   - '.ssh/'
   - '.aws/'
   - 'credentials.json'
+  - 'private.key'
+  - '.env'
+  - 'config.local.js'
+  - 'application.yml'

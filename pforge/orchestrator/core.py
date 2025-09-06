@@ -1,7 +1,14 @@
 from __future__ import annotations
 import asyncio
 import logging
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List, TYPE_CHECKING, Any
+
+from pforge.llm_clients.budget_meter import BudgetMeter
+from pforge.llm_clients.openai_o3_client import OpenAIClient
+from pforge.validation.coverage_index import CoverageIndex
+from pforge.validation.dep_graph import DependencyGraph
+from pforge.validation.selection import TestSelector
+from pforge.validation.test_runner import PytestRunner
 
 if TYPE_CHECKING:
     from pforge.agents.base_agent import BaseAgent
@@ -12,6 +19,7 @@ from pforge.orchestrator.signals import MsgType, Message
 from pforge.orchestrator.state_bus import StateBus
 from pforge.project import Project
 from pforge.math_models.efficiency import compute_intelligent_efficiency
+import os
 
 logger = logging.getLogger("pforge.orchestrator")
 
@@ -34,21 +42,77 @@ class Orchestrator:
         self.completion_event = asyncio.Event()
         self.success = False
         self.last_applied_patch = None
+        self.dependencies: Dict[str, Any] = {}
 
         self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_REJECTED.value)
         self.bus.subscribe("orchestrator", MsgType.FIX_PATCH_APPLIED.value)
         self.bus.subscribe("orchestrator", MsgType.SPEC_CHECKED.value)
         self.bus.subscribe("orchestrator", MsgType.CONFLICT_FOUND.value)
 
+    def _create_dependencies(self):
+        """Creates and stores shared dependencies for the agents."""
+        logger.info("Creating shared dependencies...")
+
+        budget_meter = BudgetMeter(
+            tenant=self.config.budget.tenant,
+            daily_quota_tokens=self.config.budget.daily_quota_tokens,
+            redis_client=self.bus.redis_client
+        )
+        self.dependencies['budget_meter'] = budget_meter
+
+        llm_client = OpenAIClient(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            budget_meter=budget_meter
+        )
+        self.dependencies['llm_client'] = llm_client
+
+        dep_graph = DependencyGraph(project_root=self.project.root)
+        self.dependencies['dep_graph'] = dep_graph
+
+        coverage_index = CoverageIndex(project_root=self.project.root)
+        coverage_index.load()
+        self.dependencies['coverage_index'] = coverage_index
+
+        test_selector = TestSelector(dep_graph, coverage_index)
+        self.dependencies['test_selector'] = test_selector
+
+        test_runner = PytestRunner(project_root=self.project.root)
+        self.dependencies['test_runner'] = test_runner
+
+        logger.info("Shared dependencies created.")
+
+
     def setup_agents(self):
         """
-        Discovers and instantiates all available agents from the registry.
+        Discovers, creates dependencies, and instantiates all available agents.
         """
+        self._create_dependencies()
+
         for name, agent_class in self.agent_registry.agents.items():
-            # Pass config and project to each agent
-            agent_instance = agent_class(
-                bus=self.bus, config=self.config, project=self.project
-            )
+
+            # This is a simple way to map dependencies. A more robust system
+            # might use reflection on the constructor's signature.
+            agent_deps = {
+                "bus": self.bus,
+                "config": self.config,
+                "project": self.project,
+            }
+            if name in ["fixer", "false_piece", "summarizer_agent"]:
+                agent_deps["llm_client"] = self.dependencies["llm_client"]
+            if name in ["fixer", "false_piece", "observer"]:
+                 agent_deps["dep_graph"] = self.dependencies["dep_graph"]
+            if name == "fixer":
+                agent_deps["coverage_index"] = self.dependencies["coverage_index"]
+                agent_deps["test_selector"] = self.dependencies["test_selector"]
+                agent_deps["test_runner"] = self.dependencies["test_runner"]
+
+
+            # Filter agent_class.__init__ signature to pass only required deps
+            import inspect
+            sig = inspect.signature(agent_class.__init__)
+            required_deps = {param: agent_deps[param] for param in sig.parameters if param in agent_deps}
+
+            agent_instance = agent_class(**required_deps)
             self.agents.append(agent_instance)
             logger.info("Instantiated agent: %s", name)
 

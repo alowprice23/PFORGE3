@@ -5,6 +5,11 @@ qed_gate:
 planner:
   cvar_alpha: 0.90
 
+redaction:
+  entropy_scan_enabled: true
+  entropy_threshold: 4.5
+  min_secret_length: 20
+
 constraints:
   - id: phi.safety.no_secrets
     blocking: true

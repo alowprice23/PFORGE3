@@ -29,13 +29,23 @@ class FormatterAgent(BaseAgent):
         if not message or message.type != MsgType.FORMAT_FILE:
             return
 
-        file_path_str = message.payload.get("file_path")
-        if not file_path_str:
+        payload = message.payload
+        file_path_str = payload.get("file_path")
+        op_id = payload.get("op_id")
+        token = payload.get("capability_token")
+
+        if not all([file_path_str, op_id, token]):
+            logger.error(f"Invalid FORMAT_FILE message received: {payload}")
             return
 
-        await self._format_file(file_path_str)
+        self.receive_token(token, op_id)
+        await self._format_file(file_path_str, op_id)
 
-    async def _format_file(self, file_path_str: str):
+    async def _format_file(self, file_path_str: str, op_id: str):
+        if not await self.has_capability("fs:read", op_id) or not await self.has_capability("fs:write", op_id):
+            logger.error(f"Missing 'fs:read' or 'fs:write' capability for op_id {op_id}. Aborting format.")
+            return
+
         logger.info(f"FormatterAgent formatting file: {file_path_str}")
         full_path = self.project.root / file_path_str
         if not full_path.exists():
@@ -43,7 +53,7 @@ class FormatterAgent(BaseAgent):
             # Optionally, publish a failure message
             return
 
-        output, exit_code = run_ruff(full_path, fix=True)
+        output, exit_code = run_ruff(full_path, fix=True, cache_dir=self.project.root / ".ruff_cache")
 
         if exit_code == 0:
             logger.info(f"Successfully formatted {file_path_str}")

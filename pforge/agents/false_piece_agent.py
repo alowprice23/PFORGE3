@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING, Set
 import orjson
 import asyncio
 import time
+import uuid
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
+from pforge.proof.capabilities import issue_token
 from pforge.llm_clients.openai_o3_client import OpenAIClient
 from pforge.llm_clients.budget_meter import BudgetMeter
 from pforge.utils.llm_parsing import parse_llm_json_response
@@ -32,25 +34,18 @@ class FalsePieceAgent(BaseAgent):
     # This is a heavy operation, run it infrequently.
     detection_interval: float = 60.0
 
-    def __init__(self, bus: InMemoryBus, config: Config, project: Project):
+    def __init__(self, bus: InMemoryBus, config: Config, project: Project, llm_client: OpenAIClient, dep_graph: DependencyGraph):
         super().__init__(bus, config, project)
         self.source_root = self.project.root
         self.last_detection_time = 0
-        self.dep_graph = DependencyGraph(project_root=self.source_root)
         self.tick_counter = 0
 
         # Subscribe to commands from the Planner
         self.bus.subscribe(self.name, MsgType.ACCEPT_REMOVAL.value)
 
-        budget_meter = BudgetMeter(
-            tenant=self.config.budget.tenant,
-            daily_quota_tokens=self.config.budget.daily_quota_tokens,
-            redis_client=self.bus.redis_client
-        )
-        self.llm_client = OpenAIClient(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            budget_meter=budget_meter
-        )
+        # Dependencies are now injected
+        self.llm_client = llm_client
+        self.dep_graph = dep_graph
 
     def _find_unreferenced_files(self) -> Set[Path]:
         """Uses the dependency graph to find files that are not referenced."""
@@ -135,6 +130,14 @@ class FalsePieceAgent(BaseAgent):
 
     async def _detect_and_propose(self):
         """Scans for unreferenced files and proposes them for removal."""
+        op_id = f"false_piece_scan_{uuid.uuid4()}"
+        token = issue_token(self.name, ["fs:read"], op_id)
+        self.receive_token(token, op_id)
+
+        if not await self.has_capability("fs:read", op_id):
+            logger.error(f"Missing 'fs:read' capability for op_id {op_id}. Aborting scan.")
+            return
+
         logger.info("FalsePieceAgent scanning for unreferenced files...")
         candidate_files = self._find_unreferenced_files()
 

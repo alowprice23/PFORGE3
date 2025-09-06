@@ -1,10 +1,13 @@
 from __future__ import annotations
 import logging
 import importlib
+import time
+import uuid
 from typing import TYPE_CHECKING, List, Tuple, Callable, Dict, Any
 
 from .base_agent import BaseAgent
 from pforge.orchestrator.signals import MsgType, Message
+from pforge.proof.capabilities import issue_token
 
 if TYPE_CHECKING:
     from pforge.messaging.in_memory_bus import InMemoryBus
@@ -30,7 +33,24 @@ class RecoveryAgent(BaseAgent):
     def __init__(self, bus: InMemoryBus, config: Config, project: Project):
         super().__init__(bus, config, project)
         self.recovery_config = self.config.recovery
-        self.health_checks: List[Tuple[DetectorFunc, ActionFunc]] = self._load_health_checks()
+        self.health_checks: List[Tuple[DetectorFunc, ActionFunc]] = []
+
+    async def on_startup(self):
+        """
+        On startup, load the health checks from the config, but only if the
+        agent has the required capability.
+        """
+        # For simulation, we grant the token directly. In a real system,
+        # this would be provided securely at startup.
+        startup_op_id = f"recovery_startup_{int(time.time())}"
+        token = issue_token(self.name, ["system:load_dynamic_modules"], startup_op_id)
+        self.receive_token(token, startup_op_id)
+
+        if await self.has_capability("system:load_dynamic_modules", startup_op_id):
+            logger.info("RecoveryAgent has 'system:load_dynamic_modules' capability. Loading health checks.")
+            self.health_checks = self._load_health_checks()
+        else:
+            logger.error("RecoveryAgent lacks 'system:load_dynamic_modules' capability. No health checks will be loaded.")
 
     def _load_health_checks(self) -> List[Tuple[DetectorFunc, ActionFunc]]:
         """Dynamically loads detector and action functions from config."""
@@ -76,8 +96,20 @@ class RecoveryAgent(BaseAgent):
 
     async def _run_recovery_action(self, action: ActionFunc, failure_details: Dict[str, Any]):
         """
-        Executes a recovery action and publishes the result.
+        Executes a recovery action and publishes the result, guarded by a capability check.
         """
+        op_id = f"recovery_action_{action.__name__}_{uuid.uuid4()}"
+
+        # In a real system, the orchestrator/planner would grant this token
+        # based on the detected failure. For this simulation, we grant it directly.
+        # A more granular capability like f"exec:{action.__name__}" could be used.
+        token = issue_token(self.name, ["exec:recovery_action"], op_id)
+        self.receive_token(token, op_id)
+
+        if not await self.has_capability("exec:recovery_action", op_id):
+            logger.error(f"Attempted to run recovery action '{action.__name__}' without 'exec:recovery_action' capability for op_id {op_id}.")
+            return
+
         logger.info(f"Executing recovery action '{action.__name__}'...")
         try:
             action_proof = action()
